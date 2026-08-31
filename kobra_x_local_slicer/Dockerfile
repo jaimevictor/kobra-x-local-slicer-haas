@@ -1,4 +1,3 @@
-ARG BUILD_FROM=ubuntu:24.04
 FROM ubuntu:24.04 AS orca
 ARG ORCA_VERSION=2.4.2
 ARG ORCA_SHA256=d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd
@@ -35,7 +34,7 @@ RUN mkdir -p /vendor \
  && cp node_modules/three/examples/jsm/loaders/3MFLoader.js /vendor/3MFLoader.js \
  && cp node_modules/three/examples/jsm/controls/OrbitControls.js /vendor/OrbitControls.js
 
-FROM ${BUILD_FROM}
+FROM ubuntu:24.04 AS runtime
 ARG ORCA_VERSION=2.4.2
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
