@@ -1,0 +1,38 @@
+name: "Kobra X Local Slicer"
+slug: "kobra_x_local_slicer"
+version: "0.1.0"
+description: "Local STL/3MF slicing and LAN printing for Anycubic Kobra X"
+arch:
+  - amd64
+startup: application
+boot: auto
+init: false
+homeassistant_api: true
+ingress: true
+ingress_port: 8099
+ingress_stream: true
+panel_title: "Kobra X Slicer"
+panel_icon: "mdi:printer-3d"
+panel_admin: true
+options:
+  printer_host: ""
+  upload_limit_mib: 64
+  decompressed_3mf_limit_mib: 256
+  gcode_limit_mib: 512
+  jobs_storage_limit_mib: 1024
+  max_jobs: 25
+  slicing_timeout_seconds: 600
+  retention_hours: 24
+  max_concurrent_slicers: 1
+  ha_device_id: ""
+schema:
+  printer_host: str
+  upload_limit_mib: int(1,512)
+  decompressed_3mf_limit_mib: int(16,2048)
+  gcode_limit_mib: int(16,2048)
+  jobs_storage_limit_mib: int(128,8192)
+  max_jobs: int(1,100)
+  slicing_timeout_seconds: int(60,3600)
+  retention_hours: int(1,168)
+  max_concurrent_slicers: int(1,1)
+  ha_device_id: str?

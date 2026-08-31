@@ -1,0 +1,38 @@
+from __future__ import annotations
+import asyncio,hashlib,json,os,shutil
+from pathlib import Path
+from app.core.models import Orientation
+class OrcaError(RuntimeError):pass
+class OrcaRunner:
+ def __init__(self,profile_dir:Path,timeout_seconds:int,gcode_limit_bytes:int): self.profile_dir=profile_dir;self.timeout_seconds=timeout_seconds;self.gcode_limit_bytes=gcode_limit_bytes;self.app=os.getenv('ORCA_APP','OrcaSlicer');self.version=os.getenv('ORCA_VERSION','2.4.2')
+ def _profile(self,name:str)->Path:
+  p=self.profile_dir/name
+  if not p.is_file(): raise OrcaError(f'resolved profile missing: {name}')
+  return p
+ def load_filament_profile(self)->dict:return json.loads(self._profile('anycubic_pla_kobra_x.resolved.json').read_text(encoding='utf-8'))
+ def manifest_sha256(self)->str|None:
+  p=self.profile_dir/'manifest.json';return hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None
+ def profile_versions(self)->dict[str,str]:
+  p=self.profile_dir/'manifest.json'
+  return json.loads(p.read_text()).get('resolved_sha256',{}) if p.is_file() else {}
+ async def slice(self,input_path:Path,directory:Path,orientation:Orientation)->Path:
+  out=directory/'output.gcode'; machine=self._profile('kobra_x_04.resolved.json');process=self._profile('kobra_x_020_standard.resolved.json');filament=self._profile('anycubic_pla_kobra_x.resolved.json')
+  # Verified with OrcaSlicer 2.4.2 --help in the built image.
+  cmd=[self.app,'--load-settings',f'{machine};{process}','--load-filaments',str(filament),'--ensure-on-bed','--outputdir',str(directory),'--slice','0',str(input_path)]
+  if orientation==Orientation.ROTATE_X_90: cmd.extend(['--rotate-x','90'])
+  if orientation==Orientation.ROTATE_Y_90: cmd.extend(['--rotate-y','90'])
+  if orientation==Orientation.ROTATE_Z_90: cmd.extend(['--rotate','90'])
+  try:
+   proc=await asyncio.wait_for(asyncio.create_subprocess_exec(*cmd,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE),10)
+   _,err=await asyncio.wait_for(proc.communicate(),self.timeout_seconds)
+  except FileNotFoundError as exc: raise OrcaError('OrcaSlicer executable unavailable') from exc
+  generated=list(directory.glob('*.gcode'))
+  if proc.returncode or len(generated)!=1: raise OrcaError(f'Orca slicing failed or produced {len(generated)} G-code files: {err.decode(errors="replace")[-500:]}')
+  if generated[0]!=out: generated[0].replace(out)
+  if out.stat().st_size>self.gcode_limit_bytes: raise OrcaError('Orca output exceeds G-code limit')
+  return out
+ async def export_oriented_3mf(self,input_path:Path,directory:Path,orientation:Orientation)->Path:
+  # The CLI has no verified auto-orient/export workflow in this revision: safe preview is original geometry.
+  if input_path.suffix.lower()=='.3mf':
+   out=directory/'oriented_preview.3mf';shutil.copyfile(input_path,out);return out
+  raise OrcaError('auto orientation preview is only available for 3MF files')

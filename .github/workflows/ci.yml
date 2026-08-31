@@ -1,0 +1,17 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install -r kobra_x_local_slicer/requirements-dev.txt
+      - run: python -m compileall -q kobra_x_local_slicer/app
+      - run: ruff check --select F kobra_x_local_slicer/app tests
+      - run: pytest -q -m 'not hardware'
+      - run: node --check kobra_x_local_slicer/app/static/app.js
+      - run: docker build --platform linux/amd64 -t kobra-x-local-slicer:ci kobra_x_local_slicer
+      - run: ./scripts/golden_slice.sh
+      - run: docker run -d --name kobra-ci -e KOBRA_DATA_DIR=/tmp/kobra kobra-x-local-slicer:ci && sleep 3 && docker exec kobra-ci wget -qO- http://127.0.0.1:8098/api/health && docker rm -f kobra-ci

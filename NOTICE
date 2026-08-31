@@ -1,0 +1,43 @@
+Kobra X Local Slicer - notices
+================================
+
+Project code in this repository is licensed under MIT; see LICENSE.
+Copyright in third-party components remains with their respective authors.
+
+Bundled / runtime third-party components
+-----------------------------------------
+
+1. OrcaSlicer 2.4.2
+   License: GNU Affero General Public License (AGPL-3.0)
+   Upstream: https://github.com/OrcaSlicer/OrcaSlicer
+   Tag: v2.4.2
+   Source commit: 8500fcdccaa10b5099ac20d252af3a7c560046f1
+   Linux Ubuntu 24.04 AppImage SHA-256:
+   d12fb8c8eac1aecd2dfb6377acd48f994f8fa439ed5292fa532dd82880f029fd
+   The Docker build downloads and verifies the unmodified upstream AppImage, extracts it,
+   and uses its own bundled official Anycubic profiles as build inputs. OrcaSlicer is
+   invoked as a separate process; it is not copied into this repository's Python source.
+
+2. anycubic-cloud-api 0.4.26
+   License: GPL-3.0-or-later
+   Upstream: https://github.com/Nino6689/anycubic-cloud-api
+   Used for public LAN handshake and local MQTT client functionality.
+
+3. Three.js 0.179.1
+   License: MIT
+   Upstream: https://github.com/mrdoob/three.js
+   The Docker build copies the ES modules required by the offline frontend into the image.
+
+Other pinned Python/runtime dependencies
+----------------------------------------
+FastAPI (MIT), aiohttp (Apache-2.0), HTTPX (BSD-3-Clause), Pydantic (MIT),
+python-multipart (Apache-2.0), Uvicorn (BSD-3-Clause), Paho MQTT Python
+(EPL-2.0 OR EDL-1.0), defusedxml (PSF-2.0), and Nginx (BSD-2-Clause).
+Consult each installed distribution for the authoritative license text and notices.
+
+Protocol references
+-------------------
+The implementation was independently written from observed protocol behavior and public
+references. KX-Bridge is used only as a protocol reference; no substantial source blocks are
+copied from it. Keep its license terms separate from this project and do not copy source from
+unlicensed/unclear third-party repositories into this tree.
