@@ -6,6 +6,7 @@ from typing import Any
 import aiohttp
 import httpx
 from pydantic import BaseModel, Field
+from app.core.models import AceSlot, AceSnapshot
 
 
 class HomeAssistantError(RuntimeError):
@@ -35,6 +36,11 @@ ROLE_ALIASES: dict[str, tuple[str, ...]] = {
     "current_fault": ("job_failed", "current_fault", "fault", "printer_error"),
 }
 REQUIRED_ROLES = ("online", "available", "busy", "job_in_progress", "state", "filename")
+ACE_ROLE_ALIASES: dict[str, tuple[str, ...]] = {
+    "slot_1": ("ace_slot_1",), "slot_2": ("ace_slot_2",),
+    "slot_3": ("ace_slot_3",), "slot_4": ("ace_slot_4",),
+    "loaded_slot": ("ace_loaded_slot",),
+}
 
 
 def _entity_names(entity: dict[str, Any]) -> set[str]:
@@ -71,6 +77,15 @@ def suggest_entity_map(entities: list[dict[str, Any]]) -> tuple[dict[str, Any], 
     return suggested, [role for role in REQUIRED_ROLES if role not in suggested]
 
 
+def suggest_ace_entity_map(entities: list[dict[str, Any]]) -> dict[str, str]:
+    return {role: entity_id for role, aliases in ACE_ROLE_ALIASES.items() if (entity_id := _find_entity(entities, aliases))}
+
+
+def _is_ace_device(device: dict[str, Any], entities: list[dict[str, Any]]) -> bool:
+    name = str(device.get("name_by_user") or device.get("name") or "").lower()
+    return " ace" in name or "ace" == name or "slot_1" in suggest_ace_entity_map(entities)
+
+
 class HomeAssistantClient:
     def __init__(self):
         self.token = os.getenv("SUPERVISOR_TOKEN", "")
@@ -98,21 +113,69 @@ class HomeAssistantClient:
                 devices = await command(1, "config/device_registry/list")
                 entities = await command(2, "config/entity_registry/list")
 
-        candidates = []
+        anycubic_devices = []
+        rows_by_device: dict[str, list[dict[str, Any]]] = {}
         for device in devices:
             identifiers = device.get("identifiers", []) if isinstance(device, dict) else []
-            if not any(item[0] == "anycubic_cloud" for item in identifiers if isinstance(item, (list, tuple)) and item):
+            if isinstance(device, dict) and any(item[0] == "anycubic_cloud" for item in identifiers if isinstance(item, (list, tuple)) and item):
+                anycubic_devices.append(device)
+                rows_by_device[device["id"]] = [entity for entity in entities if isinstance(entity, dict) and entity.get("device_id") == device["id"]]
+
+        ace_devices = [device for device in anycubic_devices if _is_ace_device(device, rows_by_device[device["id"]])]
+        candidates = []
+        for device in anycubic_devices:
+            rows = rows_by_device[device["id"]]
+            if _is_ace_device(device, rows):
                 continue
-            rows = [entity for entity in entities if isinstance(entity, dict) and entity.get("device_id") == device.get("id")]
             suggested, unresolved = suggest_entity_map(rows)
+            name = str(device.get("name_by_user") or device.get("name") or "")
+            ace_device = next((child for child in ace_devices if child.get("via_device_id") == device["id"]), None)
+            if ace_device is None:
+                ace_device = next((child for child in ace_devices if str(child.get("name_by_user") or child.get("name") or "").lower().startswith(name.lower())), None)
+            ace_rows = rows_by_device.get(ace_device["id"], []) if ace_device else []
             candidates.append({
                 "device_id": device["id"],
-                "name": device.get("name_by_user") or device.get("name") or device["id"],
+                "name": name or device["id"],
                 "entities": [{"entity_id": entity["entity_id"], "translation_key": entity.get("translation_key")} for entity in rows],
                 "suggested_map": suggested,
                 "unresolved_roles": unresolved,
+                "ace_device_id": ace_device.get("id") if ace_device else None,
+                "ace_suggested_map": suggest_ace_entity_map(ace_rows),
             })
         return candidates
+
+    async def ace_snapshot(self, mapping: dict[str, str]) -> AceSnapshot:
+        if not any(role.startswith("slot_") for role in mapping):
+            raise HomeAssistantError("Home Assistant ACE entity mapping is not configured")
+        headers = {"Authorization": f"Bearer {self.token}"}
+        values: dict[str, str] = {}
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                for role, entity_id in mapping.items():
+                    if not isinstance(entity_id, str):
+                        continue
+                    response = await client.get(f"http://supervisor/core/api/states/{entity_id}", headers=headers)
+                    response.raise_for_status()
+                    values[role] = str(response.json().get("state"))
+        except httpx.HTTPError as exc:
+            raise HomeAssistantError(str(exc)) from exc
+
+        try:
+            loaded_slot = int(values.get("loaded_slot", "-1"))
+        except ValueError:
+            loaded_slot = -1
+        parsed: list[dict[str, Any]] = []
+        normalized: list[AceSlot] = []
+        for index in range(1, 5):
+            material = values.get(f"slot_{index}")
+            if material and material.lower() not in {"unknown", "unavailable", "none"}:
+                material = material.upper()
+            else:
+                material = None
+            item = {"slot": index, "material_type": material, "loaded": index == loaded_slot}
+            parsed.append(item)
+            normalized.append(AceSlot(human_slot=index, protocol_slot_index=index - 1, material_type=material, loaded=index == loaded_slot))
+        return AceSnapshot(raw={"source": "home_assistant", "states": values}, parsed=parsed, normalized=normalized)
 
     async def cross_check(self, mapping: dict[str, Any]) -> HAStatus:
         headers = {"Authorization": f"Bearer {self.token}"}

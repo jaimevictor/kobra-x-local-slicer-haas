@@ -14,7 +14,7 @@ class OrientationInput(BaseModel):orientation:Orientation
 class SupportInput(BaseModel):enabled:bool
 class SlotInput(BaseModel):human_slot:int
 class ConfirmInput(BaseModel):gcode_sha256:str;table_clear:bool
-class ConfigInput(BaseModel):printer_host:str;ha_device_id:str;ha_entity_map:dict={}
+class ConfigInput(BaseModel):printer_host:str;ha_device_id:str;ha_entity_map:dict={};ha_ace_entity_map:dict={}
 @router.get('/health')
 async def health(request:Request):
  s=request.app.state.settings; return {'ok':True,'printer_host_configured':bool(s.printer_host),'lan_connected':bool(svc(request).lan and svc(request).lan.connected)}
@@ -25,7 +25,7 @@ async def set_config(body:ConfigInput,request:Request):
  try:
   required={'online','available','busy','job_in_progress','state','filename'}
   if not body.ha_device_id or required-set(body.ha_entity_map): raise ValueError('safety-critical Home Assistant role mappings are required')
-  s=request.app.state.settings;s.printer_host=validate_printer_host(body.printer_host);s.ha_device_id=body.ha_device_id;s.ha_entity_map=body.ha_entity_map;s.save_config()
+  s=request.app.state.settings;s.printer_host=validate_printer_host(body.printer_host);s.ha_device_id=body.ha_device_id;s.ha_entity_map=body.ha_entity_map;s.ha_ace_entity_map=body.ha_ace_entity_map;s.save_config()
   old=svc(request).lan
   if old: await old.close()
   svc(request).lan=KobraLanSession(s.printer_host)

@@ -178,10 +178,23 @@ class AppService:
             await upload.close()
 
     async def ace(self, job_id: str | None = None):
-        if not self.lan:
-            raise ServiceError("printer_host not configured")
-        payload = await self.lan.query_ace()
-        snapshot = parse_ace_payload(payload)
+        snapshot = None
+        lan_error: Exception | None = None
+        if self.lan:
+            try:
+                snapshot = parse_ace_payload(await self.lan.query_ace())
+            except Exception as exc:
+                lan_error = exc
+        if not snapshot or not pla_slots(snapshot):
+            try:
+                ha_snapshot = await HomeAssistantClient().ace_snapshot(self.settings.ha_ace_entity_map or {})
+                if ha_snapshot.normalized:
+                    snapshot = ha_snapshot
+            except Exception as exc:
+                if snapshot is None:
+                    lan_error = lan_error or exc
+        if snapshot is None:
+            raise ServiceError(f"ACE unavailable: {lan_error or 'printer_host not configured'}")
         if job_id:
             record = self.job(job_id)
             record.ace_snapshot = snapshot
@@ -388,7 +401,7 @@ class AppService:
         uploader = KobraUploadClient(
             self.settings.printer_host,
             device_id=self.lan.broker.device_id,
-            client_version="0.1.3",
+            client_version="0.1.5",
         )
         try:
             await uploader.upload(upload_url, gcode, remote_filename)

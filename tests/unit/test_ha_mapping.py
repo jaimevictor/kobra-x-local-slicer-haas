@@ -1,4 +1,4 @@
-from app.ha.client import suggest_entity_map
+from app.ha.client import suggest_ace_entity_map, suggest_entity_map
 
 
 def test_anycubic_documented_entity_keys_are_suggested():
@@ -18,3 +18,17 @@ def test_anycubic_documented_entity_keys_are_suggested():
     assert mapping["filename"] == "sensor.kobra_job_name"
     assert mapping["current_fault"] == "binary_sensor.kobra_job_failed"
     assert mapping["error_entities"] == ["binary_sensor.kobra_job_failed"]
+
+
+def test_ace_child_device_entities_are_mapped_separately():
+    entities = [
+        {"entity_id": "sensor.kobra_ace_ace_slot_1", "translation_key": "ace_slot_1"},
+        {"entity_id": "sensor.kobra_ace_ace_slot_2", "translation_key": "ace_slot_2"},
+        {"entity_id": "sensor.kobra_ace_ace_loaded_slot", "translation_key": "ace_loaded_slot"},
+    ]
+    mapping = suggest_ace_entity_map(entities)
+    assert mapping == {
+        "slot_1": "sensor.kobra_ace_ace_slot_1",
+        "slot_2": "sensor.kobra_ace_ace_slot_2",
+        "loaded_slot": "sensor.kobra_ace_ace_loaded_slot",
+    }

@@ -111,7 +111,7 @@ invented:
 1. Auto-orient is intentionally limited to safe manual preview because a supported Orca 2.4.2
    CLI invocation has not been verified in this environment.
 2. Upload reproduces the observed BBL-style header names, but identifies this client as
-   `KobraXLocalSlicer/0.1.3` instead of inventing an Anycubic Slicer Next version. If the Kobra X
+   `KobraXLocalSlicer/0.1.5` instead of inventing an Anycubic Slicer Next version. If the Kobra X
    firmware turns out to require a specific value for an optional header, capture it in a
    hardware test and pin it explicitly.
 
