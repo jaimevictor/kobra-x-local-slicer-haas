@@ -23,4 +23,6 @@ def parse_ace_payload(payload:dict[str,Any])->AceSnapshot:
  return AceSnapshot(raw=payload,parsed=parsed,normalized=normalized)
 def pla_slots(snapshot:AceSnapshot)->list[AceSlot]: return [x for x in snapshot.normalized if x.material_type=='PLA']
 def select_default_pla(snapshot:AceSnapshot)->AceSlot|None:
- slots=pla_slots(snapshot); return slots[0] if len(slots)==1 else None
+ slots=pla_slots(snapshot)
+ loaded=[slot for slot in slots if slot.loaded is True]
+ return loaded[0] if loaded else (slots[0] if slots else None)

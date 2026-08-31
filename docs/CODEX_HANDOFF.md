@@ -40,7 +40,7 @@ Inspect the Docker log for:
 Then inspect the built image:
 
 ```bash
-docker run --rm --entrypoint sh kobra-x-local-slicer:0.1.2 -c \
+docker run --rm --entrypoint sh kobra-x-local-slicer:0.1.3 -c \
  'cat /opt/kobra/profiles/resolved/manifest.json && /opt/venv/bin/python -m compileall -q /opt/kobra/app'
 ```
 

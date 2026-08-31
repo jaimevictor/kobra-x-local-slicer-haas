@@ -1,5 +1,5 @@
 import pytest
-from app.kobra.ace import parse_ace_payload
+from app.kobra.ace import parse_ace_payload,select_default_pla
 from app.core.models import JobState
 from app.core.state_machine import TransitionError,assert_transition
 def test_ace_preserves_missing_fields_and_slot_mapping():
@@ -9,3 +9,8 @@ def test_ace_preserves_missing_fields_and_slot_mapping():
 def test_no_automatic_sliced_to_print_transition():
  with pytest.raises(TransitionError):assert_transition(JobState.SLICED,JobState.UPLOADING_TO_PRINTER)
  assert_transition(JobState.STARTING,JobState.START_UNKNOWN)
+def test_default_pla_prefers_loaded_slot_then_first_pla():
+ snapshot=parse_ace_payload({'data':{'slots':[{'materialType':'PLA','isLoaded':False},{'materialType':'PLA','isLoaded':True}]}})
+ assert select_default_pla(snapshot).human_slot==2
+ first=parse_ace_payload({'data':{'slots':[{'materialType':'PLA'},{'materialType':'PLA'}]}})
+ assert select_default_pla(first).human_slot==1

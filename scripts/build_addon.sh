@@ -1,3 +1,3 @@
 #!/usr/bin/env sh
 set -eu
-docker build --platform linux/amd64 -t kobra-x-local-slicer:0.1.2 ./kobra_x_local_slicer
+docker build --platform linux/amd64 -t kobra-x-local-slicer:0.1.3 ./kobra_x_local_slicer
