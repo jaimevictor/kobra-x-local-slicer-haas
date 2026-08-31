@@ -11,6 +11,7 @@ router=APIRouter()
 def svc(request:Request):return request.app.state.service
 def error(exc:Exception): raise HTTPException(400,str(exc)) from exc
 class OrientationInput(BaseModel):orientation:Orientation
+class SupportInput(BaseModel):enabled:bool
 class SlotInput(BaseModel):human_slot:int
 class ConfirmInput(BaseModel):gcode_sha256:str;table_clear:bool
 class ConfigInput(BaseModel):printer_host:str;ha_device_id:str;ha_entity_map:dict={}
@@ -54,6 +55,10 @@ async def slot(job_id:str,body:SlotInput,request:Request):
 async def orientation(job_id:str,body:OrientationInput,request:Request):
  try:
   job,preview=await svc(request).set_orientation(job_id,body.orientation);return {'job':job,'preview_file':preview}
+ except Exception as exc:error(exc)
+@router.post('/jobs/{job_id}/supports')
+async def supports(job_id:str,body:SupportInput,request:Request):
+ try:return svc(request).set_supports(job_id,body.enabled)
  except Exception as exc:error(exc)
 @router.post('/jobs/{job_id}/slice')
 async def slice_job(job_id:str,request:Request):

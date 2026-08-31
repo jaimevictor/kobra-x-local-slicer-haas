@@ -15,8 +15,14 @@ class OrcaRunner:
  def profile_versions(self)->dict[str,str]:
   p=self.profile_dir/'manifest.json'
   return json.loads(p.read_text()).get('resolved_sha256',{}) if p.is_file() else {}
- async def slice(self,input_path:Path,directory:Path,orientation:Orientation)->Path:
-  out=directory/'output.gcode'; machine=self._profile('kobra_x_04.resolved.json');process=self._profile('kobra_x_020_standard.resolved.json');filament=self._profile('anycubic_pla_kobra_x.resolved.json')
+ def _process_for_slice(self,directory:Path,supports_enabled:bool)->Path:
+  process=self._profile('kobra_x_020_standard.resolved.json')
+  if not supports_enabled:return process
+  settings=json.loads(process.read_text(encoding='utf-8'));settings['enable_support']='1'
+  enabled=directory/'process_with_supports.json';enabled.write_text(json.dumps(settings),encoding='utf-8')
+  return enabled
+ async def slice(self,input_path:Path,directory:Path,orientation:Orientation,supports_enabled:bool=False)->Path:
+  out=directory/'output.gcode'; machine=self._profile('kobra_x_04.resolved.json');process=self._process_for_slice(directory,supports_enabled);filament=self._profile('anycubic_pla_kobra_x.resolved.json')
   # Verified with OrcaSlicer 2.4.2 --help in the built image.
   cmd=[self.app,'--load-settings',f'{machine};{process}','--load-filaments',str(filament),'--ensure-on-bed','--outputdir',str(directory),'--slice','0',str(input_path)]
   if orientation==Orientation.ROTATE_X_90: cmd.extend(['--rotate-x','90'])

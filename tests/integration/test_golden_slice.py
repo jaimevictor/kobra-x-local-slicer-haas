@@ -17,3 +17,9 @@ def test_golden_cube(tmp_path):
  assert analysis.has_g9111 and not analysis.has_m600 and analysis.tools<= {0}
  assert analysis.stats.dimensions.size[0]<=20.1 and analysis.stats.dimensions.size[1]<=20.1
  assert analysis.stats.gcode_sha256 and analysis.stats.profile_manifest_sha256
+
+def test_golden_cube_with_supports_enabled(tmp_path):
+ runner=OrcaRunner(Path('/opt/kobra/profiles/resolved'),600,512*1024*1024)
+ output=asyncio.run(runner.slice(Path('/tests/fixtures/20mm_cube.stl'),tmp_path,Orientation.ORIGINAL,True))
+ assert output.stat().st_size>0
+ assert (tmp_path/'process_with_supports.json').is_file()

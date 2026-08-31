@@ -225,6 +225,19 @@ class AppService:
             preview = oriented.name
         return self._save(record), preview
 
+    def set_supports(self, job_id: str, enabled: bool) -> JobRecord:
+        record = self.job(job_id)
+        if record.state not in {JobState.READY_TO_SLICE, JobState.SLICED, JobState.AWAITING_CONFIRMATION}:
+            raise ServiceError("supports cannot change in current state")
+        record.supports_enabled = enabled
+        record.slice_stats = None
+        record.approved_gcode_sha256 = None
+        record.approved_slot_snapshot = None
+        record.table_clear_confirmed = False
+        if record.state in {JobState.SLICED, JobState.AWAITING_CONFIRMATION}:
+            self._transition(record, JobState.READY_TO_SLICE)
+        return self._save(record)
+
     async def slice(self, job_id: str) -> JobRecord:
         record = self.job(job_id)
         if record.state not in {JobState.READY_TO_SLICE, JobState.SLICED, JobState.AWAITING_CONFIRMATION}:
@@ -250,7 +263,7 @@ class AppService:
         self._transition(record, JobState.SLICING)
         directory = self.store.job_dir(job_id)
         try:
-            gcode = await self.orca.slice(self._slicing_input(record), directory, record.orientation)
+            gcode = await self.orca.slice(self._slicing_input(record), directory, record.orientation, record.supports_enabled)
             analysis = inspect_gcode(
                 gcode,
                 filament_profile=self.orca.load_filament_profile(),
@@ -375,7 +388,7 @@ class AppService:
         uploader = KobraUploadClient(
             self.settings.printer_host,
             device_id=self.lan.broker.device_id,
-            client_version="0.1.1",
+            client_version="0.1.2",
         )
         try:
             await uploader.upload(upload_url, gcode, remote_filename)

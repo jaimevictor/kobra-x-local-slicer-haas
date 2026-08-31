@@ -55,6 +55,7 @@ class SliceStats(BaseModel):
 class JobRecord(BaseModel):
     id: str; original_filename: str; input_filename: str; input_type: str; state: JobState
     created_at: datetime; updated_at: datetime; orientation: Orientation = Orientation.ORIGINAL
+    supports_enabled: bool = False
     selected_slot: AceSlot | None = None; ace_snapshot: AceSnapshot | None = None; slice_stats: SliceStats | None = None
     approved_gcode_sha256: str | None = None; approved_slot_snapshot: AceSlot | None = None; table_clear_confirmed: bool = False
     remote_filename: str | None = None; ha_error_baseline: dict[str, str] = Field(default_factory=dict); error: str | None = None
