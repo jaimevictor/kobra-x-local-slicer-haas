@@ -5,6 +5,18 @@ import { ThreeMFLoader } from 'three/addons/3MFLoader.js';
 
 const $ = (s) => document.querySelector(s);
 const log = (s) => { $('#log').textContent = `[${new Date().toLocaleTimeString()}] ${s}\n` + $('#log').textContent; };
+let pendingRequests = 0;
+function setBusy(active, message = 'Processando…') {
+  pendingRequests = Math.max(0, pendingRequests + (active ? 1 : -1));
+  $('#busyText').textContent = message;
+  $('#busyOverlay').classList.toggle('hidden', pendingRequests === 0);
+}
+const nativeFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+  setBusy(true);
+  try { return await nativeFetch(...args); }
+  finally { setBusy(false); }
+};
 const api = async (path, options={}) => {
   const response = await fetch(`./api/${path.replace(/^\//,'')}`, {cache:'no-store', ...options});
   const type = response.headers.get('content-type') || '';

@@ -46,7 +46,7 @@ def validate_upload_response(status: int, body: dict[str, Any], filename: str) -
 
 
 class KobraUploadClient:
-    def __init__(self, printer_host: str, *, device_id: str, client_version: str = "0.1.0"):
+    def __init__(self, printer_host: str, *, device_id: str, client_version: str = "0.1.1"):
         self.printer_host = printer_host
         self.device_id = device_id
         self.client_version = client_version

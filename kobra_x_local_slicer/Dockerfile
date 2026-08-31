@@ -28,11 +28,13 @@ RUN mkdir -p /profiles/source /profiles/resolved \
 FROM node:24-bookworm-slim AS frontend_vendor
 WORKDIR /src
 RUN npm init -y >/dev/null 2>&1 && npm install --ignore-scripts --save-exact three@0.179.1
-RUN mkdir -p /vendor \
+RUN mkdir -p /vendor /libs \
  && cp node_modules/three/build/three.module.js /vendor/three.module.js \
+ && cp node_modules/three/build/three.core.js /vendor/three.core.js \
  && cp node_modules/three/examples/jsm/loaders/STLLoader.js /vendor/STLLoader.js \
  && cp node_modules/three/examples/jsm/loaders/3MFLoader.js /vendor/3MFLoader.js \
- && cp node_modules/three/examples/jsm/controls/OrbitControls.js /vendor/OrbitControls.js
+ && cp node_modules/three/examples/jsm/controls/OrbitControls.js /vendor/OrbitControls.js \
+ && cp node_modules/three/examples/jsm/libs/fflate.module.js /libs/fflate.module.js
 
 FROM ubuntu:24.04 AS runtime
 ARG ORCA_VERSION=2.4.2
@@ -57,6 +59,7 @@ RUN python3 -m venv /opt/venv \
 COPY --from=orca /opt/orca /opt/orca
 COPY --from=orca /profiles/resolved /opt/kobra/profiles/resolved
 COPY --from=frontend_vendor /vendor /opt/kobra/app/static/vendor
+COPY --from=frontend_vendor /libs /opt/kobra/app/static/libs
 COPY app /opt/kobra/app
 COPY run.sh /opt/kobra/run.sh
 COPY rootfs/etc/nginx/http.d/kobra.conf /etc/nginx/sites-enabled/default
