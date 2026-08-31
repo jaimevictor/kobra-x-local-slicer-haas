@@ -42,7 +42,6 @@ CLI field from the flattened machine preset; all slicer values retain official p
 repository.yaml
 kobra_x_local_slicer/
   config.yaml
-  build.yaml
   Dockerfile
   run.sh
   requirements*.txt
