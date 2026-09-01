@@ -16,6 +16,8 @@ class Settings:
     gcode_limit_bytes: int = 512*1024*1024
     jobs_storage_limit_bytes: int = 1024*1024*1024
     retention_hours: int = 24
+    max_jobs: int = 25
+    max_concurrent_slicers: int = 1
     @classmethod
     def load(cls) -> 'Settings':
         s=cls(); path=s.data_dir/'config.json'
@@ -27,6 +29,8 @@ class Settings:
                 if name in raw_options: setattr(s,destination,int(raw_options[name])*factor)
             if 'slicing_timeout_seconds' in raw_options: s.slicing_timeout_seconds=int(raw_options['slicing_timeout_seconds'])
             if 'retention_hours' in raw_options: s.retention_hours=int(raw_options['retention_hours'])
+            if 'max_jobs' in raw_options: s.max_jobs=int(raw_options['max_jobs'])
+            if 'max_concurrent_slicers' in raw_options: s.max_concurrent_slicers=int(raw_options['max_concurrent_slicers'])
         if path.is_file():
             raw=json.loads(path.read_text(encoding='utf-8')); s.printer_host=raw.get('printer_host',''); s.ha_device_id=raw.get('ha_device_id','')
             for key in ('slicing_timeout_seconds','retention_hours'):

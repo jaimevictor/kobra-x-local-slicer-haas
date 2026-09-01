@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from dataclasses import asdict
 import json
@@ -12,7 +13,7 @@ from typing import Any
 from fastapi import UploadFile
 
 from app.core.config import Settings
-from app.core.models import JobRecord, JobState, Orientation
+from app.core.models import JobRecord, JobState, Orientation, StartPublishState
 from app.core.security import sanitize_filename
 from app.core.state_machine import assert_transition
 from app.core.storage import JobStore
@@ -57,7 +58,9 @@ class AppService:
         )
         self._ha: AnycubicHomeAssistantAdapter | None = None
         self.lan = ValidatedLegacyLanStart(settings.printer_host) if settings.printer_host else None
-        self._job_locks: dict[str, Any] = {}
+        self._job_locks: dict[str, asyncio.Lock] = {}
+        self._printer_lock = asyncio.Lock()
+        self._slicer_semaphore = asyncio.Semaphore(settings.max_concurrent_slicers)
 
     async def close(self) -> None:
         if self.lan:
@@ -90,6 +93,13 @@ class AppService:
         self.store.save(record)
         return record
 
+    def _job_lock(self, job_id: str) -> asyncio.Lock:
+        lock = self._job_locks.get(job_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._job_locks[job_id] = lock
+        return lock
+
     def _transition(self, record: JobRecord, target: JobState) -> None:
         assert_transition(record.state, target)
         record.state = target
@@ -119,6 +129,7 @@ class AppService:
     async def create_job(self, upload: UploadFile) -> JobRecord:
         filename = sanitize_filename(upload.filename or "upload", allowed_extensions={".stl", ".3mf"})
         self.store.enforce_limits()
+        self.store.enforce_max_jobs()
         job_id = str(uuid.uuid4())
         directory = self.store.create_dir(job_id)
         suffix = Path(filename).suffix.lower()
@@ -261,6 +272,11 @@ class AppService:
         return self._save(record)
 
     async def slice(self, job_id: str) -> JobRecord:
+        async with self._job_lock(job_id):
+            async with self._slicer_semaphore:
+                return await self._slice_locked(job_id)
+
+    async def _slice_locked(self, job_id: str) -> JobRecord:
         record = self.job(job_id)
         if record.state not in {JobState.READY_TO_SLICE, JobState.SLICED, JobState.AWAITING_CONFIRMATION}:
             raise ServiceError("job is not ready to slice")
@@ -309,7 +325,11 @@ class AppService:
             self._save(record)
             raise
 
-    def confirm(self, job_id: str, gcode_sha256: str, table_clear: bool) -> JobRecord:
+    async def confirm(self, job_id: str, gcode_sha256: str, table_clear: bool) -> JobRecord:
+        async with self._job_lock(job_id):
+            return self._confirm_locked(job_id, gcode_sha256, table_clear)
+
+    def _confirm_locked(self, job_id: str, gcode_sha256: str, table_clear: bool) -> JobRecord:
         record = self.job(job_id)
         if record.state != JobState.AWAITING_CONFIRMATION or not record.slice_stats or not record.selected_slot:
             raise ServiceError("job is not awaiting confirmation")
@@ -384,6 +404,19 @@ class AppService:
             raise
 
     async def print(self, job_id: str) -> JobRecord:
+        # Global first, then job-specific: two jobs cannot overlap a printer transaction.
+        async with self._printer_lock:
+            async with self._job_lock(job_id):
+                return await self._print_locked(job_id)
+
+    async def _print_locked(self, job_id: str) -> JobRecord:
+        try:
+            existing = self.job(job_id)
+        except FileNotFoundError:
+            # Keep the validation boundary at preflight for an invalid/missing job.
+            return await self.preflight(job_id)
+        if existing.start_publish_state != StartPublishState.NOT_ATTEMPTED or existing.start_attempt_id:
+            raise ServiceError("print/start was already intended for this job; it will only be reconciled")
         record, info, _ha, slot = await self.preflight(job_id)
         assert self.lan and self.lan.broker and record.approved_gcode_sha256
         directory = self.store.job_dir(job_id)
@@ -405,6 +438,12 @@ class AppService:
             raise
         record.remote_filename = remote_filename
         self._transition(record, JobState.UPLOADED_TO_PRINTER)
+        # This durable intent is written before the physical one-shot publish.
+        record.start_attempt_id = str(uuid.uuid4())
+        record.start_intent_created_at = _utcnow()
+        record.start_transport = "ValidatedLegacyLanStart"
+        record.start_publish_state = StartPublishState.INTENT_PERSISTED
+        self._save(record)
         self._transition(record, JobState.STARTING)
         rgb = list(slot.rgb or (255, 255, 255))
         payload = {
@@ -415,13 +454,19 @@ class AppService:
                 {"slot_index": slot.protocol_slot_index, "material_type": "PLA", "color": rgb}
             ],
         }
+        record.start_publish_state = StartPublishState.PUBLISH_ATTEMPTED
+        record.start_attempted_at = _utcnow()
+        self._save(record)
         result = await self.lan.publish_print_start_once(payload)
         if result.accepted:
+            record.start_publish_state = StartPublishState.ACK_ACCEPTED
+            self._save(record)
             self._transition(record, JobState.PRINT_ACCEPTED)
             await self._reconcile_started(record)
             return record
 
         # Critical idempotency rule: never publish print/start a second time.
+        record.start_publish_state = StartPublishState.ACK_REJECTED if result.ack_received else StartPublishState.DELIVERY_UNKNOWN
         record.state = JobState.START_UNKNOWN
         record.error = "print/start delivery/ACK uncertain; command will not be retried"
         self._save(record)

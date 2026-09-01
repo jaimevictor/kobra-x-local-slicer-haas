@@ -93,7 +93,7 @@ async def slice_job(job_id:str,request:Request):
  except Exception as exc:error(exc)
 @router.post('/jobs/{job_id}/confirm')
 async def confirm(job_id:str,body:ConfirmInput,request:Request):
- try:return svc(request).confirm(job_id,body.gcode_sha256,body.table_clear)
+ try:return await svc(request).confirm(job_id,body.gcode_sha256,body.table_clear)
  except Exception as exc:error(exc)
 @router.post('/jobs/{job_id}/print')
 async def print_job(job_id:str,request:Request):

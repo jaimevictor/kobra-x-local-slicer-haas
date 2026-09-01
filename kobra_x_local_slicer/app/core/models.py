@@ -16,6 +16,16 @@ class JobState(str, Enum):
     CANCELLED = "CANCELLED"; EXPIRED = "EXPIRED"
 
 
+class StartPublishState(str, Enum):
+    NOT_ATTEMPTED = "NOT_ATTEMPTED"
+    INTENT_PERSISTED = "INTENT_PERSISTED"
+    PUBLISH_ATTEMPTED = "PUBLISH_ATTEMPTED"
+    ACK_ACCEPTED = "ACK_ACCEPTED"
+    ACK_REJECTED = "ACK_REJECTED"
+    DELIVERY_UNKNOWN = "DELIVERY_UNKNOWN"
+    RECONCILED = "RECONCILED"
+
+
 class Orientation(str, Enum):
     ORIGINAL = "original"; ROTATE_X_90 = "rotate_x_90"; ROTATE_Y_90 = "rotate_y_90"; ROTATE_Z_90 = "rotate_z_90"; AUTO = "auto"
 
@@ -114,6 +124,11 @@ class JobRecord(BaseModel):
     remote_filename: str | None = None; error: str | None = None
     printer_snapshot_at_slice: PrinterSnapshot | None = None
     action_log: list[dict[str, Any]] = Field(default_factory=list)
+    start_attempt_id: str | None = None
+    start_intent_created_at: datetime | None = None
+    start_transport: str | None = None
+    start_publish_state: StartPublishState = StartPublishState.NOT_ATTEMPTED
+    start_attempted_at: datetime | None = None
 
 
 class PrintStartResult(BaseModel):
