@@ -693,8 +693,12 @@ class AppService:
                 self._save(record)
                 continue
             if record.state == JobState.UPLOADED_TO_PRINTER:
-                self._transition(record, JobState.AWAITING_CONFIRMATION)
-                continue
+                if record.start_attempt_id:
+                    self._transition(record, JobState.STARTING)
+                    self._transition(record, JobState.START_UNKNOWN)
+                else:
+                    self._transition(record, JobState.AWAITING_CONFIRMATION)
+                    continue
             if record.state == JobState.STARTING:
                 self._transition(record, JobState.START_UNKNOWN)
             if record.state in {JobState.START_UNKNOWN, JobState.PRINT_ACCEPTED}:

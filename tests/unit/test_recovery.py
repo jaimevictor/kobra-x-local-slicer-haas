@@ -3,11 +3,11 @@ from datetime import UTC, datetime
 import pytest
 
 from app.core.config import Settings
-from app.core.models import JobRecord, JobState
+from app.core.models import JobRecord, JobState, StartPublishState
 from app.core.service import AppService, ServiceError
 
 
-def _job(service, job_id, state):
+def _job(service, job_id, state, *, start_attempt_id=None):
     service.store.create_dir(job_id)
     record = JobRecord(
         id=job_id,
@@ -17,6 +17,12 @@ def _job(service, job_id, state):
         state=state,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
+        start_attempt_id=start_attempt_id,
+        start_publish_state=(
+            StartPublishState.INTENT_PERSISTED
+            if start_attempt_id
+            else StartPublishState.NOT_ATTEMPTED
+        ),
     )
     service.store.save(record)
 
@@ -30,6 +36,12 @@ async def test_restart_recovers_transient_states_without_starting(
     _job(service, "preflight", JobState.PREFLIGHT)
     _job(service, "uploading", JobState.UPLOADING_TO_PRINTER)
     _job(service, "uploaded", JobState.UPLOADED_TO_PRINTER)
+    _job(
+        service,
+        "intent-persisted",
+        JobState.UPLOADED_TO_PRINTER,
+        start_attempt_id="start-attempt-already-persisted",
+    )
     _job(service, "starting", JobState.STARTING)
 
     async def no_ha():
@@ -41,4 +53,5 @@ async def test_restart_recovers_transient_states_without_starting(
     assert service.job("preflight").state == JobState.AWAITING_CONFIRMATION
     assert service.job("uploading").state == JobState.FAILED_RECOVERABLE
     assert service.job("uploaded").state == JobState.AWAITING_CONFIRMATION
+    assert service.job("intent-persisted").state == JobState.START_UNKNOWN
     assert service.job("starting").state == JobState.START_UNKNOWN
