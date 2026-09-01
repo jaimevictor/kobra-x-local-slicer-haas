@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 from fastapi import APIRouter,File,HTTPException,Request,UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -8,8 +9,11 @@ from app.kobra.lan import KobraLanSession
 from app.ha.client import HomeAssistantClient
 
 router=APIRouter()
+LOGGER=logging.getLogger(__name__)
 def svc(request:Request):return request.app.state.service
-def error(exc:Exception): raise HTTPException(400,str(exc)) from exc
+def error(exc:Exception):
+ LOGGER.warning('Kobra API request rejected: %s',exc)
+ raise HTTPException(400,str(exc)) from exc
 class OrientationInput(BaseModel):orientation:Orientation
 class SupportInput(BaseModel):enabled:bool
 class SlotInput(BaseModel):human_slot:int
