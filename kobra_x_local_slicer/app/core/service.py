@@ -726,6 +726,8 @@ class AppService:
             JobState.MONITORING,
             JobState.PRINT_ACCEPTED,
             JobState.START_UNKNOWN,
+            JobState.PRINTING,
+            JobState.PAUSED,
         }:
             raise ServiceError(f"cannot {action} in job state {record.state.value}")
         snapshot = await self.printer_snapshot()
