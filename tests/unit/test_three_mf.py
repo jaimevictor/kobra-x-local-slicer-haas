@@ -1,6 +1,6 @@
 import zipfile
 import pytest
-from app.slicer.three_mf import ThreeMFError,inspect_3mf
+from app.slicer.three_mf import ThreeMFError,inspect_3mf,sanitize_3mf_for_slicing
 MODEL=b'''<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources/><build><item objectid="1"/></build></model>'''
 def write(tmp_path,entries):
  p=tmp_path/'x.3mf'
@@ -19,3 +19,17 @@ def test_path_traversal_and_size_limit(tmp_path):
 def test_multicolor(tmp_path):
  model=b'<model><resources><object><mesh><triangles><triangle pid="1" p1="1"/><triangle pid="1" p1="2"/></triangles></mesh></object></resources><build><item/></build></model>'
  with pytest.raises(ThreeMFError,match='multicolor'):inspect_3mf(write(tmp_path,{'3D/3dmodel.model':model}),max_decompressed=1024)
+
+def test_sanitized_3mf_removes_dangling_settings_relationships(tmp_path):
+ source=write(tmp_path,{
+  '3D/3dmodel.model':MODEL,
+  'Metadata/model_settings.config':b'<config/>',
+  '3D/_rels/3dmodel.model.rels':b'<Relationships><Relationship Target="/Metadata/model_settings.config" Type="settings"/></Relationships>',
+  '[Content_Types].xml':b'<Types><Override PartName="/Metadata/model_settings.config" ContentType="settings"/></Types>',
+ })
+ target=tmp_path/'sanitized.3mf'
+ sanitize_3mf_for_slicing(source,target,max_decompressed=1024)
+ with zipfile.ZipFile(target) as archive:
+  assert 'Metadata/model_settings.config' not in archive.namelist()
+  assert b'model_settings.config' not in archive.read('3D/_rels/3dmodel.model.rels')
+  assert b'model_settings.config' not in archive.read('[Content_Types].xml')

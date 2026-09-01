@@ -1,6 +1,6 @@
 name: "Kobra X Local Slicer"
 slug: "kobra_x_local_slicer"
-version: "0.1.7"
+version: "0.1.8"
 description: "Local STL/3MF slicing and LAN printing for Anycubic Kobra X"
 arch:
   - amd64

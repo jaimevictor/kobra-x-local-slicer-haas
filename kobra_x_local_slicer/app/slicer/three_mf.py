@@ -4,6 +4,7 @@ import stat
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from xml.etree import ElementTree as ET
 
 from defusedxml import ElementTree as DET
 
@@ -185,6 +186,54 @@ def _blocked_for_slicing(name: str) -> bool:
     return lowered in BLOCKED_SLICING_METADATA or any(lowered.startswith(p) for p in BLOCKED_SLICING_PREFIXES)
 
 
+def _normalise_package_path(base: PurePosixPath, target: str) -> str:
+    parts: list[str] = [] if target.startswith("/") else list(base.parts)
+    for part in PurePosixPath(target).parts:
+        if part in {"", ".", "/"}:
+            continue
+        if part == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(part)
+    return "/".join(parts)
+
+
+def _source_parent_for_relationships(name: str) -> PurePosixPath | None:
+    path = PurePosixPath(name)
+    if path.name == ".rels" and path.parent.name == "_rels":
+        return PurePosixPath()
+    if path.parent.name != "_rels" or not path.name.endswith(".rels"):
+        return None
+    source_name = path.name[:-5]
+    return path.parent.parent / source_name
+
+
+def _rewrite_relationships(name: str, raw: bytes) -> bytes:
+    source = _source_parent_for_relationships(name)
+    if source is None:
+        return raw
+    root = DET.fromstring(raw)
+    changed = False
+    for element in list(root):
+        target = element.attrib.get("Target")
+        if _local(element.tag) == "Relationship" and target and _blocked_for_slicing(_normalise_package_path(source.parent, target)):
+            root.remove(element)
+            changed = True
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True) if changed else raw
+
+
+def _rewrite_content_types(raw: bytes) -> bytes:
+    root = DET.fromstring(raw)
+    changed = False
+    for element in list(root):
+        part_name = element.attrib.get("PartName", "").lstrip("/")
+        if _local(element.tag) == "Override" and _blocked_for_slicing(part_name):
+            root.remove(element)
+            changed = True
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True) if changed else raw
+
+
 def sanitize_3mf_for_slicing(src: Path, dst: Path, *, max_decompressed: int) -> list[str]:
     """Create a geometry-preserving copy that cannot import project/preset slicing settings.
 
@@ -216,6 +265,10 @@ def sanitize_3mf_for_slicing(src: Path, dst: Path, *, max_decompressed: int) -> 
                         data = source.read(info.file_size + 1)
                     if len(data) != info.file_size:
                         raise ThreeMFError(f"3MF member size changed while reading: {info.filename}")
+                    if info.filename.lower().endswith(".rels"):
+                        data = _rewrite_relationships(info.filename, data)
+                    elif info.filename == "[Content_Types].xml":
+                        data = _rewrite_content_types(data)
                     zout.writestr(clean, data)
             tmp.replace(dst)
     except zipfile.BadZipFile as exc:

@@ -401,7 +401,7 @@ class AppService:
         uploader = KobraUploadClient(
             self.settings.printer_host,
             device_id=self.lan.broker.device_id,
-            client_version="0.1.7",
+            client_version="0.1.8",
         )
         try:
             await uploader.upload(upload_url, gcode, remote_filename)
