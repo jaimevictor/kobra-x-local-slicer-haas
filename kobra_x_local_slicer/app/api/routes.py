@@ -99,6 +99,9 @@ async def set_config(body: ConfigInput, request: Request):
         if old:
             await old.close()
         svc(request).lan = ValidatedLegacyLanStart(s.printer_host)
+        old_adapter = svc(request)._ha
+        if old_adapter:
+            await old_adapter.close()
         svc(request)._ha = None
         return {"ok": True}
     except Exception as exc:

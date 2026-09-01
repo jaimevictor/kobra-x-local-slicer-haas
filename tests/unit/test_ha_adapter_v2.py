@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -179,3 +180,96 @@ async def test_discovery_links_ace_only_through_via_device_id(monkeypatch):
     found = await adapter.discover()
     assert found[0]["device_id"] == "printer"
     assert found[0]["ace_device_id"] == "ace"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_start_creates_only_one_websocket_lifecycle(monkeypatch):
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
+    adapter = AnycubicHomeAssistantAdapter("printer")
+    resolves = refreshes = 0
+
+    async def resolve():
+        nonlocal resolves
+        resolves += 1
+
+    async def refresh():
+        nonlocal refreshes
+        refreshes += 1
+        return {}
+
+    async def watch():
+        await adapter._stop_event.wait()
+
+    monkeypatch.setattr(adapter, "resolve", resolve)
+    monkeypatch.setattr(adapter, "_refresh_states", refresh)
+    monkeypatch.setattr(adapter, "_watch_state_changes", watch)
+    await asyncio.gather(adapter.start(), adapter.start())
+
+    assert resolves == 1
+    assert refreshes == 1
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_registry_invalidation_reresolves_entity_ids(monkeypatch):
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
+    adapter = AnycubicHomeAssistantAdapter("printer")
+    # This is the state left by an entity/device registry update event.
+    adapter.entities = {}
+    adapter._state_cache = None
+    resolves = 0
+
+    async def resolve():
+        nonlocal resolves
+        resolves += 1
+        adapter.entities = {"printer_online": "binary_sensor.renamed"}
+
+    async def ws(commands):
+        assert commands == [("get_states", {})]
+        return [[{"entity_id": "binary_sensor.renamed", **_row("on")}]]
+
+    monkeypatch.setattr(adapter, "resolve", resolve)
+    monkeypatch.setattr(adapter, "_ws", ws)
+    states = await adapter._refresh_states()
+
+    assert resolves == 1
+    assert states["printer_online"]["state"] == "on"
+
+
+@pytest.mark.asyncio
+async def test_state_read_uses_rest_only_after_websocket_failure(monkeypatch):
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
+    adapter = AnycubicHomeAssistantAdapter("printer")
+    adapter.entities = {"printer_online": "binary_sensor.printer_online"}
+
+    async def unavailable(_commands):
+        from app.ha.client import HomeAssistantError
+
+        raise HomeAssistantError("websocket unavailable")
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return _row("on")
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, url, *, headers):
+            assert url.endswith("/binary_sensor.printer_online")
+            assert headers["Authorization"] == "Bearer test"
+            return Response()
+
+    monkeypatch.setattr(adapter, "_ws", unavailable)
+    monkeypatch.setattr("app.ha.client.httpx.AsyncClient", lambda **_kwargs: Client())
+    states = await adapter._refresh_states()
+
+    assert states["printer_online"]["state"] == "on"

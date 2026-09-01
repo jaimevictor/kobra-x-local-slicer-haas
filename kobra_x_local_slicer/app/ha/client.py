@@ -249,17 +249,19 @@ class AnycubicHomeAssistantAdapter:
         self._state_cache: dict[str, dict[str, Any]] | None = None
         self._watch_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
+        self._lifecycle_lock = asyncio.Lock()
         self.ws_connected = False
         self.last_health_check_at: datetime | None = None
 
     async def start(self) -> None:
         """Resolve once, hydrate a state cache, then keep it live via HA events."""
-        if self._watch_task and not self._watch_task.done():
-            return
-        self._stop_event.clear()
-        await self.resolve()
-        await self._refresh_states()
-        self._watch_task = asyncio.create_task(self._watch_state_changes())
+        async with self._lifecycle_lock:
+            if self._watch_task and not self._watch_task.done():
+                return
+            self._stop_event.clear()
+            await self.resolve()
+            await self._refresh_states()
+            self._watch_task = asyncio.create_task(self._watch_state_changes())
 
     async def close(self) -> None:
         self._stop_event.set()
