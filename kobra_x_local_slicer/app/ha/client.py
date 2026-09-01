@@ -343,13 +343,14 @@ class AnycubicHomeAssistantAdapter:
 
     def capabilities(self, states: dict[str, dict[str, Any]] | None = None) -> dict[str, bool]:
         keys = set(states or self.entities)
+        usable = lambda key: key in keys and _availability((states or {}).get(key)) == "available"
         result = dict(CAPABILITY_DEFAULTS)
         result.update({
-            "telemetry_from_ha": set(ESSENTIAL_KEYS).issubset(keys),
-            "ace_from_ha": bool(keys.intersection({"ace_spools", "ace_slot_1", "ace_loaded_slot"})),
-            "pause_via_ha": "pause_print" in keys, "resume_via_ha": "resume_print" in keys,
-            "cancel_via_ha": "cancel_print" in keys, "local_file_list_via_ha": "file_list_local" in keys,
-            "camera_via_ha": "job_image_url" in keys,
+            "telemetry_from_ha": all(usable(key) for key in ESSENTIAL_KEYS),
+            "ace_from_ha": any(usable(key) for key in {"ace_spools", "ace_slot_1", "ace_loaded_slot"}),
+            "pause_via_ha": usable("pause_print"), "resume_via_ha": usable("resume_print"),
+            "cancel_via_ha": usable("cancel_print"), "local_file_list_via_ha": usable("file_list_local"),
+            "camera_via_ha": usable("job_image_url"),
         })
         return result
 
@@ -448,6 +449,9 @@ class AnycubicHomeAssistantAdapter:
             await self.resolve()
         if key not in self.entities:
             raise HomeAssistantError(f"{action} is unsupported by the selected Anycubic integration")
+        snapshot = await self.snapshot()
+        if snapshot.entity_availability.get(key) != "available":
+            raise HomeAssistantError(f"{action} entity is unavailable")
         headers = {"Authorization": f"Bearer {self.token}"}
         try:
             async with httpx.AsyncClient(timeout=8) as client:

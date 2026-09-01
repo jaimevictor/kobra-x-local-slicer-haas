@@ -21,7 +21,14 @@ class ConfirmInput(BaseModel):gcode_sha256:str;table_clear:bool
 class ConfigInput(BaseModel):printer_host:str;ha_device_id:str
 @router.get('/health')
 async def health(request:Request):
- s=request.app.state.settings; return {'ok':True,'printer_host_configured':bool(s.printer_host),'ha_device_configured':bool(s.ha_device_id),'integration_error':getattr(request.app.state,'integration_error',None),'lan_connected':bool(svc(request).lan and svc(request).lan.connected)}
+ s=request.app.state.settings
+ health={'ok':True,'printer_host_configured':bool(s.printer_host),'ha_device_configured':bool(s.ha_device_id),'integration_error':getattr(request.app.state,'integration_error',None),'lan_transport_configured':bool(svc(request).lan),'ha_accessible':False,'integration_resolved':False,'snapshot_available':False,'printer_online':None}
+ if s.ha_device_id:
+  try:
+   snapshot=await svc(request).printer_snapshot()
+   health.update({'ha_accessible':snapshot.ha_connected,'integration_resolved':snapshot.essential_entities_available,'snapshot_available':True,'printer_online':snapshot.online,'snapshot_stale':snapshot.stale})
+  except Exception as exc: health['integration_error']=str(exc)
+ return health
 @router.get('/config')
 async def config(request:Request): return {'printer_host':request.app.state.settings.printer_host}
 @router.put('/config')

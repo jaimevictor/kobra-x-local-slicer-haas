@@ -571,23 +571,41 @@ class AppService:
         return [self.job(record.id) for record in records]
 
     async def control(self, job_id: str, action: str) -> JobRecord:
+        async with self._job_lock(job_id):
+            return await self._control_locked(job_id, action)
+
+    async def _control_locked(self, job_id: str, action: str) -> JobRecord:
         record = self.job(job_id)
         if record.state not in {JobState.MONITORING, JobState.PRINT_ACCEPTED, JobState.START_UNKNOWN}:
             raise ServiceError(f"cannot {action} in job state {record.state.value}")
         snapshot = await self.printer_snapshot()
         if snapshot.stale:
             raise ServiceError("cannot control printer while Home Assistant state is stale")
+        if action == "pause" and not (snapshot.job.in_progress is True and snapshot.job.paused is False):
+            raise ServiceError("pause is valid only while printing")
+        if action == "resume" and snapshot.job.paused is not True:
+            raise ServiceError("resume is valid only while paused")
+        if action == "cancel" and not (snapshot.job.in_progress is True or snapshot.busy is True):
+            raise ServiceError("cancel is valid only while a job is active")
         try:
             outcome = await self._ha_adapter().press(action)
         except HomeAssistantError as exc:
             raise ServiceError(str(exc)) from exc
         outcome["requested_at"] = _utcnow().isoformat()
-        try:
-            observed = await self.printer_snapshot()
-            outcome["observed_state"] = observed.status
-            outcome["observed_paused"] = observed.job.paused
-            outcome["confirmed"] = (action == "pause" and observed.job.paused is True) or (action == "resume" and observed.job.paused is False) or (action == "cancel" and observed.busy is False)
-        except ServiceError:
-            outcome["confirmed"] = False
+        outcome["confirmed"] = False
+        for _ in range(10):
+            try:
+                observed = await self.printer_snapshot()
+                outcome["observed_state"] = observed.status
+                outcome["observed_paused"] = observed.job.paused
+                outcome["confirmed"] = (action == "pause" and observed.job.paused is True) or (action == "resume" and observed.job.paused is False) or (action == "cancel" and observed.busy is False)
+                if outcome["confirmed"]:
+                    outcome["confirmed_at"] = _utcnow().isoformat()
+                    break
+            except ServiceError:
+                break
+            await asyncio.sleep(1)
+        if not outcome["confirmed"]:
+            outcome["confirmation_timeout_at"] = _utcnow().isoformat()
         record.action_log.append(outcome)
         return self._save(record)
