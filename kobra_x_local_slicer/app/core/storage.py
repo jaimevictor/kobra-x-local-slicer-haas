@@ -69,7 +69,13 @@ class JobStore:
                     JobState.SLICING,
                     JobState.PREFLIGHT,
                     JobState.UPLOADING_TO_PRINTER,
+                    JobState.UPLOADED_TO_PRINTER,
                     JobState.STARTING,
+                    JobState.START_UNKNOWN,
+                    JobState.PRINT_ACCEPTED,
+                    JobState.MONITORING,
+                    JobState.PRINTING,
+                    JobState.PAUSED,
                 }:
                     shutil.rmtree(p)
             except (FileNotFoundError, ValueError):

@@ -670,7 +670,11 @@ class AppService:
             self._transition(record, JobState.PAUSED)
         elif (
             snapshot.job.in_progress is True or snapshot.busy is True
-        ) and record.state in {JobState.PRINT_ACCEPTED, JobState.MONITORING}:
+        ) and record.state in {
+            JobState.PRINT_ACCEPTED,
+            JobState.MONITORING,
+            JobState.PAUSED,
+        }:
             self._transition(record, JobState.PRINTING)
 
     async def reconcile_active_jobs(self) -> list[JobRecord]:
@@ -763,6 +767,10 @@ class AppService:
                 )
                 if outcome["confirmed"]:
                     outcome["confirmed_at"] = _utcnow().isoformat()
+                    if action == "cancel":
+                        self._transition(record, JobState.CANCELLED)
+                    else:
+                        await self._apply_observed_job_state(record, observed)
                     break
             except ServiceError:
                 break

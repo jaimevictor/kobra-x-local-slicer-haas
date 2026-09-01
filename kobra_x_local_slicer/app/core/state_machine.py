@@ -37,6 +37,7 @@ _NEXT = {
         JobState.PRINT_ACCEPTED,
         JobState.MONITORING,
         JobState.START_REJECTED,
+        JobState.CANCELLED,
         JobState.FAILED_RECOVERABLE,
     },
     JobState.PRINT_ACCEPTED: {
@@ -44,6 +45,7 @@ _NEXT = {
         JobState.PRINTING,
         JobState.PAUSED,
         JobState.COMPLETED,
+        JobState.CANCELLED,
         JobState.FAILED,
     },
     JobState.MONITORING: {
