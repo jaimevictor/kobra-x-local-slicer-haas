@@ -4,6 +4,10 @@ O add-on usa Ingress e expõe somente Nginx na porta interna 8099; FastAPI escut
 O armazenamento persistente fica em `/data/jobs/<uuid>` e os perfis resolved são somente leitura
 em `/opt/kobra/profiles/resolved`.
 
+As configurações de conexão seguem a precedência `defaults < /data/options.json <
+/data/config.json < KOBRA_PRINTER_HOST/KOBRA_HA_DEVICE_ID`. O painel Ingress grava apenas host
+e `device_id`; os limites operacionais são controlados pelas opções do add-on.
+
 ## Verificação sem hardware
 
 Use Python 3.12 ou superior, pois `anycubic-cloud-api==0.4.26` exige essa versão.

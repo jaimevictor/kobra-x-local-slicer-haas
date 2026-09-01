@@ -24,12 +24,20 @@ class Settings:
     max_concurrent_slicers: int = 1
 
     @classmethod
-    def load(cls) -> "Settings":
-        s = cls()
+    def load(cls, *, data_dir: Path | None = None) -> "Settings":
+        """Load defaults < add-on options < UI config < explicit environment.
+
+        The UI only persists its two connection choices in ``config.json``; add-on
+        options own operational limits.  Environment variables deliberately win
+        for supervised/deployment overrides without rewriting either file.
+        """
+        s = cls(data_dir=data_dir) if data_dir is not None else cls()
         path = s.data_dir / "config.json"
         options = s.data_dir / "options.json"
         if options.is_file():
             raw_options = json.loads(options.read_text(encoding="utf-8"))
+            s.printer_host = str(raw_options.get("printer_host", s.printer_host))
+            s.ha_device_id = str(raw_options.get("ha_device_id", s.ha_device_id))
             for name, factor in (
                 ("upload_limit_mib", 1024 * 1024),
                 ("decompressed_3mf_limit_mib", 1024 * 1024),
@@ -49,11 +57,15 @@ class Settings:
                 s.max_concurrent_slicers = int(raw_options["max_concurrent_slicers"])
         if path.is_file():
             raw = json.loads(path.read_text(encoding="utf-8"))
-            s.printer_host = raw.get("printer_host", "")
-            s.ha_device_id = raw.get("ha_device_id", "")
+            s.printer_host = str(raw.get("printer_host", s.printer_host))
+            s.ha_device_id = str(raw.get("ha_device_id", s.ha_device_id))
             for key in ("slicing_timeout_seconds", "retention_hours"):
                 if key in raw:
                     setattr(s, key, int(raw[key]))
+        if host := os.getenv("KOBRA_PRINTER_HOST"):
+            s.printer_host = host
+        if device_id := os.getenv("KOBRA_HA_DEVICE_ID"):
+            s.ha_device_id = device_id
         return s
 
     def save_config(self) -> None:

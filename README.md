@@ -104,6 +104,12 @@ the adapter resolves current `anycubic_cloud` entity IDs by exact `translation_k
 ACE child via `via_device_id`. Only the printer `device_id` is persisted in `/data/config.json`.
 No Home Assistant long-lived token or Anycubic cloud credential is stored.
 
+Connection configuration is resolved predictably as: built-in defaults, then
+`/data/options.json`, then the Ingress-managed `/data/config.json`, and finally
+`KOBRA_PRINTER_HOST` / `KOBRA_HA_DEVICE_ID` environment overrides. Operational
+limits remain owned by add-on options; the Ingress form only changes the printer
+host and selected Home Assistant device.
+
 ## Known verification points
 
 Two details remain intentionally marked for real build/hardware verification rather than being
