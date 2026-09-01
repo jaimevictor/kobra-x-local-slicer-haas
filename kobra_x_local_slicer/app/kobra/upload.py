@@ -15,11 +15,16 @@ class UploadError(RuntimeError):
 
 
 def extract_upload_url(info_payload: dict[str, Any]) -> str:
-    data = info_payload.get("data") if isinstance(info_payload.get("data"), dict) else info_payload
+    data = (
+        info_payload.get("data")
+        if isinstance(info_payload.get("data"), dict)
+        else info_payload
+    )
     urls = data.get("urls") if isinstance(data, dict) else None
     if isinstance(urls, dict) and isinstance(urls.get("fileUploadurl"), str):
         return urls["fileUploadurl"]
     matches: list[str] = []
+
     def walk(v: Any) -> None:
         if isinstance(v, dict):
             for k, child in v.items():
@@ -28,7 +33,9 @@ def extract_upload_url(info_payload: dict[str, Any]) -> str:
                 else:
                     walk(child)
         elif isinstance(v, list):
-            for child in v: walk(child)
+            for child in v:
+                walk(child)
+
     walk(info_payload)
     if len(set(matches)) != 1:
         raise UploadError("info/query did not contain exactly one fileUploadurl")
@@ -50,12 +57,17 @@ class DirectLanFileTransfer:
 
     This class has no printer state, ACE, MQTT, polling, or control methods.
     """
-    def __init__(self, printer_host: str, *, device_id: str, client_version: str = "2.0.0"):
+
+    def __init__(
+        self, printer_host: str, *, device_id: str, client_version: str = "2.0.0"
+    ):
         self.printer_host = printer_host
         self.device_id = device_id
         self.client_version = client_version
 
-    async def upload(self, upload_url: str, gcode_path: Path, remote_filename: str) -> dict[str, Any]:
+    async def upload(
+        self, upload_url: str, gcode_path: Path, remote_filename: str
+    ) -> dict[str, Any]:
         validate_upload_url(upload_url, self.printer_host)
         size = gcode_path.stat().st_size
         headers = {
@@ -73,7 +85,12 @@ class DirectLanFileTransfer:
             with gcode_path.open("rb") as fh:
                 form = aiohttp.FormData()
                 form.add_field("filename", remote_filename)
-                form.add_field("gcode", fh, filename=remote_filename, content_type="application/octet-stream")
+                form.add_field(
+                    "gcode",
+                    fh,
+                    filename=remote_filename,
+                    content_type="application/octet-stream",
+                )
                 async with session.post(
                     upload_url,
                     data=form,

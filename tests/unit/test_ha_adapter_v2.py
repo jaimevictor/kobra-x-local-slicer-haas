@@ -6,17 +6,30 @@ from app.ha.client import AnycubicHomeAssistantAdapter, suggest_entity_map
 
 
 def _row(state, **attributes):
-    return {"state": state, "attributes": attributes, "last_updated": datetime.now(UTC).isoformat()}
+    return {
+        "state": state,
+        "attributes": attributes,
+        "last_updated": datetime.now(UTC).isoformat(),
+    }
 
 
 def _old_row(state, **attributes):
-    return {"state": state, "attributes": attributes, "last_updated": (datetime.now(UTC) - timedelta(minutes=10)).isoformat()}
+    return {
+        "state": state,
+        "attributes": attributes,
+        "last_updated": (datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+    }
 
 
 def test_entity_id_text_is_never_used_as_a_fallback():
-    mapping, unresolved = suggest_entity_map([
-        {"entity_id": "binary_sensor.renamed_printer_online", "translation_key": None},
-    ])
+    mapping, unresolved = suggest_entity_map(
+        [
+            {
+                "entity_id": "binary_sensor.renamed_printer_online",
+                "translation_key": None,
+            },
+        ]
+    )
     assert mapping == {}
     assert "online" in unresolved
 
@@ -24,11 +37,22 @@ def test_entity_id_text_is_never_used_as_a_fallback():
 def test_ace_snapshot_preserves_attributes_and_unknowns(monkeypatch):
     monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
     adapter = AnycubicHomeAssistantAdapter("printer")
-    ace = adapter._ace({
-        "ace_loaded_slot": _row("2"),
-        "ace_slot_1": _row("unknown", slot=1, color_hex="#010203", spool_loaded=False),
-        "ace_slot_2": _row("PLA", slot=2, color_hex="#aabbcc", sku="sku", spool_loaded=True, consumables_percent="37"),
-    })
+    ace = adapter._ace(
+        {
+            "ace_loaded_slot": _row("2"),
+            "ace_slot_1": _row(
+                "unknown", slot=1, color_hex="#010203", spool_loaded=False
+            ),
+            "ace_slot_2": _row(
+                "PLA",
+                slot=2,
+                color_hex="#aabbcc",
+                sku="sku",
+                spool_loaded=True,
+                consumables_percent="37",
+            ),
+        }
+    )
     assert ace is not None
     assert ace.loaded_slot == 2
     assert ace.normalized[0].material_type is None
@@ -44,9 +68,14 @@ async def test_snapshot_keeps_unknown_false_and_zero_distinct(monkeypatch):
     adapter = AnycubicHomeAssistantAdapter("printer")
     adapter.entities = {"printer_online": "a"}
     states = {
-        "printer_online": _row("unknown"), "is_available": _row("off"), "is_busy": _row("0"),
-        "job_in_progress": _row("false"), "current_status": _row("idle"), "job_name": _row("none"),
-        "job_progress": _row("0"), "job_is_paused": _row("unavailable"),
+        "printer_online": _row("unknown"),
+        "is_available": _row("off"),
+        "is_busy": _row("0"),
+        "job_in_progress": _row("false"),
+        "current_status": _row("idle"),
+        "job_name": _row("none"),
+        "job_progress": _row("0"),
+        "job_is_paused": _row("unavailable"),
     }
 
     async def fake_states():
@@ -63,13 +92,21 @@ async def test_snapshot_keeps_unknown_false_and_zero_distinct(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_successful_idle_snapshot_is_fresh_despite_old_entity_timestamps(monkeypatch):
+async def test_successful_idle_snapshot_is_fresh_despite_old_entity_timestamps(
+    monkeypatch,
+):
     monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
     adapter = AnycubicHomeAssistantAdapter("printer")
     states = {
-        "printer_online": _old_row("on"), "is_available": _old_row("on"), "is_busy": _old_row("off"),
-        "job_in_progress": _old_row("off"), "current_status": _old_row("idle"), "job_name": _old_row("none"),
-        "last_error_code": _old_row("10107"), "last_error": _old_row("historical"), "job_failed": _old_row("off"),
+        "printer_online": _old_row("on"),
+        "is_available": _old_row("on"),
+        "is_busy": _old_row("off"),
+        "job_in_progress": _old_row("off"),
+        "current_status": _old_row("idle"),
+        "job_name": _old_row("none"),
+        "last_error_code": _old_row("10107"),
+        "last_error": _old_row("historical"),
+        "job_failed": _old_row("off"),
     }
 
     async def fake_states():
@@ -89,8 +126,12 @@ async def test_essential_unavailable_is_not_usable(monkeypatch):
     monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
     adapter = AnycubicHomeAssistantAdapter("printer")
     states = {
-        "printer_online": _row("on"), "is_available": _row("unavailable"), "is_busy": _row("off"),
-        "job_in_progress": _row("off"), "current_status": _row("idle"), "job_name": _row("none"),
+        "printer_online": _row("on"),
+        "is_available": _row("unavailable"),
+        "is_busy": _row("off"),
+        "job_in_progress": _row("off"),
+        "current_status": _row("idle"),
+        "job_name": _row("none"),
     }
 
     async def fake_states():
@@ -106,11 +147,29 @@ async def test_essential_unavailable_is_not_usable(monkeypatch):
 async def test_discovery_links_ace_only_through_via_device_id(monkeypatch):
     monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
     adapter = AnycubicHomeAssistantAdapter()
-    devices = [{"id": "printer", "name": "Renamed"}, {"id": "ace", "via_device_id": "printer"}]
+    devices = [
+        {"id": "printer", "name": "Renamed"},
+        {"id": "ace", "via_device_id": "printer"},
+    ]
     entities = [
-        {"entity_id": "binary_sensor.whatever", "platform": "anycubic_cloud", "device_id": "printer", "translation_key": "printer_online"},
-        {"entity_id": "sensor.status", "platform": "anycubic_cloud", "device_id": "printer", "translation_key": "current_status"},
-        {"entity_id": "sensor.ace_any_name", "platform": "anycubic_cloud", "device_id": "ace", "translation_key": "ace_slot_1"},
+        {
+            "entity_id": "binary_sensor.whatever",
+            "platform": "anycubic_cloud",
+            "device_id": "printer",
+            "translation_key": "printer_online",
+        },
+        {
+            "entity_id": "sensor.status",
+            "platform": "anycubic_cloud",
+            "device_id": "printer",
+            "translation_key": "current_status",
+        },
+        {
+            "entity_id": "sensor.ace_any_name",
+            "platform": "anycubic_cloud",
+            "device_id": "ace",
+            "translation_key": "ace_slot_1",
+        },
     ]
 
     async def fake_registries():

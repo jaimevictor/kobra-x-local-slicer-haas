@@ -57,7 +57,11 @@ class AppService:
             gcode_limit_bytes=settings.gcode_limit_bytes,
         )
         self._ha: AnycubicHomeAssistantAdapter | None = None
-        self.lan = ValidatedLegacyLanStart(settings.printer_host) if settings.printer_host else None
+        self.lan = (
+            ValidatedLegacyLanStart(settings.printer_host)
+            if settings.printer_host
+            else None
+        )
         self._job_locks: dict[str, asyncio.Lock] = {}
         self._printer_lock = asyncio.Lock()
         self._slicer_semaphore = asyncio.Semaphore(settings.max_concurrent_slicers)
@@ -104,7 +108,9 @@ class AppService:
             try:
                 self._ha = AnycubicHomeAssistantAdapter(self.settings.ha_device_id)
             except HomeAssistantError as exc:
-                raise ServiceError(f"Home Assistant integration unavailable: {exc}") from exc
+                raise ServiceError(
+                    f"Home Assistant integration unavailable: {exc}"
+                ) from exc
         return self._ha
 
     async def printer_snapshot(self):
@@ -113,7 +119,9 @@ class AppService:
             await adapter.start()
             return await adapter.snapshot()
         except HomeAssistantError as exc:
-            raise ServiceError(f"Home Assistant anycubic_cloud state unavailable: {exc}") from exc
+            raise ServiceError(
+                f"Home Assistant anycubic_cloud state unavailable: {exc}"
+            ) from exc
 
     async def integration_diagnostics(self) -> dict[str, Any]:
         try:
@@ -121,7 +129,9 @@ class AppService:
             await adapter.start()
             return await adapter.diagnostics()
         except HomeAssistantError as exc:
-            raise ServiceError(f"Home Assistant anycubic_cloud integration unavailable: {exc}") from exc
+            raise ServiceError(
+                f"Home Assistant anycubic_cloud integration unavailable: {exc}"
+            ) from exc
 
     def _save(self, record: JobRecord) -> JobRecord:
         record.updated_at = _utcnow()
@@ -150,19 +160,25 @@ class AppService:
             if not geometry.is_file():
                 sanitized = directory / "input_sanitized.3mf"
                 if not sanitized.is_file():
-                    raise ServiceError("sanitized 3MF missing; upload/inspection must be repeated")
+                    raise ServiceError(
+                        "sanitized 3MF missing; upload/inspection must be repeated"
+                    )
                 three_mf_to_stl(
                     sanitized,
                     geometry,
                     max_decompressed=self.settings.decompressed_3mf_limit_bytes,
                 )
             if not geometry.is_file():
-                raise ServiceError("sanitized 3MF missing; upload/inspection must be repeated")
+                raise ServiceError(
+                    "sanitized 3MF missing; upload/inspection must be repeated"
+                )
             return geometry
         return directory / record.input_filename
 
     async def create_job(self, upload: UploadFile) -> JobRecord:
-        filename = sanitize_filename(upload.filename or "upload", allowed_extensions={".stl", ".3mf"})
+        filename = sanitize_filename(
+            upload.filename or "upload", allowed_extensions={".stl", ".3mf"}
+        )
         self.store.enforce_limits()
         self.store.enforce_max_jobs()
         job_id = str(uuid.uuid4())
@@ -196,9 +212,12 @@ class AppService:
             self.store.save(record)
             self._transition(record, JobState.INSPECTING)
             if suffix == ".3mf":
-                inspection = inspect_3mf(path, max_decompressed=self.settings.decompressed_3mf_limit_bytes)
+                inspection = inspect_3mf(
+                    path, max_decompressed=self.settings.decompressed_3mf_limit_bytes
+                )
                 removed = sanitize_3mf_for_slicing(
-                    path, directory / "input_sanitized.3mf",
+                    path,
+                    directory / "input_sanitized.3mf",
                     max_decompressed=self.settings.decompressed_3mf_limit_bytes,
                 )
                 triangles = three_mf_to_stl(
@@ -216,9 +235,18 @@ class AppService:
                 mesh = inspect_stl(path)
                 sx, sy, sz = mesh.bounds.size
                 if sx > 260.01 or sy > 260.01 or sz > 260.01:
-                    raise ServiceError(f"model bounding box {sx:.2f}x{sy:.2f}x{sz:.2f} exceeds Kobra X volume before orientation")
+                    raise ServiceError(
+                        f"model bounding box {sx:.2f}x{sy:.2f}x{sz:.2f} exceeds Kobra X volume before orientation"
+                    )
                 (directory / "input_inspection.json").write_text(
-                    json.dumps({"triangles": mesh.triangles, "volume_mm3": mesh.volume_mm3, "bounds": mesh.bounds.model_dump()}, indent=2),
+                    json.dumps(
+                        {
+                            "triangles": mesh.triangles,
+                            "volume_mm3": mesh.volume_mm3,
+                            "bounds": mesh.bounds.model_dump(),
+                        },
+                        indent=2,
+                    ),
                     encoding="utf-8",
                 )
             if self.settings.ha_device_id:
@@ -267,7 +295,9 @@ class AppService:
             raise ServiceError("ACE slot not found")
         slot = matches[0]
         if slot.material_type != "PLA":
-            raise ServiceError("Material não suportado pelo slicer automático V1. Selecione um slot PLA.")
+            raise ServiceError(
+                "Material não suportado pelo slicer automático V1. Selecione um slot PLA."
+            )
         record = self.job(job_id)
         record.selected_slot = slot
         record.approved_gcode_sha256 = None
@@ -275,9 +305,15 @@ class AppService:
         record.table_clear_confirmed = False
         return self._save(record)
 
-    async def set_orientation(self, job_id: str, orientation: Orientation) -> tuple[JobRecord, str | None]:
+    async def set_orientation(
+        self, job_id: str, orientation: Orientation
+    ) -> tuple[JobRecord, str | None]:
         record = self.job(job_id)
-        if record.state not in {JobState.READY_TO_SLICE, JobState.SLICED, JobState.AWAITING_CONFIRMATION}:
+        if record.state not in {
+            JobState.READY_TO_SLICE,
+            JobState.SLICED,
+            JobState.AWAITING_CONFIRMATION,
+        }:
             raise ServiceError("orientation cannot change in current state")
         record.orientation = orientation
         record.slice_stats = None
@@ -289,13 +325,19 @@ class AppService:
         preview: str | None = None
         if orientation == Orientation.AUTO:
             directory = self.store.job_dir(job_id)
-            oriented = await self.orca.export_oriented_3mf(self._slicing_input(record), directory, orientation)
+            oriented = await self.orca.export_oriented_3mf(
+                self._slicing_input(record), directory, orientation
+            )
             preview = oriented.name
         return self._save(record), preview
 
     def set_supports(self, job_id: str, enabled: bool) -> JobRecord:
         record = self.job(job_id)
-        if record.state not in {JobState.READY_TO_SLICE, JobState.SLICED, JobState.AWAITING_CONFIRMATION}:
+        if record.state not in {
+            JobState.READY_TO_SLICE,
+            JobState.SLICED,
+            JobState.AWAITING_CONFIRMATION,
+        }:
             raise ServiceError("supports cannot change in current state")
         record.supports_enabled = enabled
         record.slice_stats = None
@@ -313,7 +355,11 @@ class AppService:
 
     async def _slice_locked(self, job_id: str) -> JobRecord:
         record = self.job(job_id)
-        if record.state not in {JobState.READY_TO_SLICE, JobState.SLICED, JobState.AWAITING_CONFIRMATION}:
+        if record.state not in {
+            JobState.READY_TO_SLICE,
+            JobState.SLICED,
+            JobState.AWAITING_CONFIRMATION,
+        }:
             raise ServiceError("job is not ready to slice")
         fresh_ace = await self.ace(job_id)
         record = self.job(job_id)
@@ -326,7 +372,14 @@ class AppService:
             if default is None:
                 raise ServiceError("multiple PLA slots available; select one")
             record.selected_slot = default
-        current = next((s for s in fresh_ace.normalized if s.protocol_slot_index == record.selected_slot.protocol_slot_index), None)
+        current = next(
+            (
+                s
+                for s in fresh_ace.normalized
+                if s.protocol_slot_index == record.selected_slot.protocol_slot_index
+            ),
+            None,
+        )
         if current is None or current.material_type != "PLA":
             raise ServiceError("selected ACE slot no longer contains PLA")
         record.selected_slot = current
@@ -337,7 +390,12 @@ class AppService:
         self._transition(record, JobState.SLICING)
         directory = self.store.job_dir(job_id)
         try:
-            gcode = await self.orca.slice(self._slicing_input(record), directory, record.orientation, record.supports_enabled)
+            gcode = await self.orca.slice(
+                self._slicing_input(record),
+                directory,
+                record.orientation,
+                record.supports_enabled,
+            )
             analysis = inspect_gcode(
                 gcode,
                 filament_profile=self.orca.load_filament_profile(),
@@ -360,13 +418,21 @@ class AppService:
             self._save(record)
             raise
 
-    async def confirm(self, job_id: str, gcode_sha256: str, table_clear: bool) -> JobRecord:
+    async def confirm(
+        self, job_id: str, gcode_sha256: str, table_clear: bool
+    ) -> JobRecord:
         async with self._job_lock(job_id):
             return self._confirm_locked(job_id, gcode_sha256, table_clear)
 
-    def _confirm_locked(self, job_id: str, gcode_sha256: str, table_clear: bool) -> JobRecord:
+    def _confirm_locked(
+        self, job_id: str, gcode_sha256: str, table_clear: bool
+    ) -> JobRecord:
         record = self.job(job_id)
-        if record.state != JobState.AWAITING_CONFIRMATION or not record.slice_stats or not record.selected_slot:
+        if (
+            record.state != JobState.AWAITING_CONFIRMATION
+            or not record.slice_stats
+            or not record.selected_slot
+        ):
             raise ServiceError("job is not awaiting confirmation")
         actual = _hash_file(self.store.job_dir(job_id) / "output.gcode")
         if actual != record.slice_stats.gcode_sha256 or gcode_sha256 != actual:
@@ -378,7 +444,9 @@ class AppService:
         record.table_clear_confirmed = True
         return self._save(record)
 
-    async def preflight(self, job_id: str) -> tuple[JobRecord, dict[str, Any], Any, Any, str]:
+    async def preflight(
+        self, job_id: str
+    ) -> tuple[JobRecord, dict[str, Any], Any, Any, str]:
         record = self.job(job_id)
         if record.state != JobState.AWAITING_CONFIRMATION:
             raise ServiceError("job is not ready for print preflight")
@@ -397,25 +465,50 @@ class AppService:
             info, upload_device_id = await self.lan.upload_bootstrap()
             ha = await self.printer_snapshot()
             if ha.stale or not ha.essential_entities_available:
-                raise ServiceError("Home Assistant printer state is stale or incomplete")
-            if ha.online is not True or ha.available is not True or ha.busy is not False or ha.job.in_progress is not False or ha.job.paused is True:
-                raise ServiceError(f"Home Assistant reports printer unavailable/busy: {ha.model_dump()}")
+                raise ServiceError(
+                    "Home Assistant printer state is stale or incomplete"
+                )
+            if (
+                ha.online is not True
+                or ha.available is not True
+                or ha.busy is not False
+                or ha.job.in_progress is not False
+                or ha.job.paused is True
+            ):
+                raise ServiceError(
+                    f"Home Assistant reports printer unavailable/busy: {ha.model_dump()}"
+                )
             if ha.status is None or ha.status.lower() not in FREE_STATES:
-                raise ServiceError(f"Home Assistant printer state is not free/available: {ha.status}")
+                raise ServiceError(
+                    f"Home Assistant printer state is not free/available: {ha.status}"
+                )
             if ha.fault.active is True:
                 raise ServiceError("Home Assistant reports an active print failure")
-            baseline_fault = record.printer_snapshot_at_slice.fault if record.printer_snapshot_at_slice else None
+            baseline_fault = (
+                record.printer_snapshot_at_slice.fault
+                if record.printer_snapshot_at_slice
+                else None
+            )
             if baseline_fault and (
                 ha.fault.last_error_code != baseline_fault.last_error_code
                 or ha.fault.last_error_message != baseline_fault.last_error_message
             ):
-                raise ServiceError("a new historical printer error appeared after slicing; confirmation is required")
+                raise ServiceError(
+                    "a new historical printer error appeared after slicing; confirmation is required"
+                )
             fresh_ace = ha.ace
             if fresh_ace is None:
                 raise ServiceError("ACE unavailable from Home Assistant")
             if record.selected_slot is None or record.approved_slot_snapshot is None:
                 raise ServiceError("selected/approved ACE slot missing")
-            slot = next((s for s in fresh_ace.normalized if s.protocol_slot_index == record.selected_slot.protocol_slot_index), None)
+            slot = next(
+                (
+                    s
+                    for s in fresh_ace.normalized
+                    if s.protocol_slot_index == record.selected_slot.protocol_slot_index
+                ),
+                None,
+            )
             if slot is None:
                 raise ServiceError("selected ACE slot no longer exists")
             if slot.material_type != "PLA":
@@ -424,7 +517,9 @@ class AppService:
                 record.table_clear_confirmed = False
                 self._transition(record, JobState.AWAITING_CONFIRMATION)
                 self._transition(record, JobState.READY_TO_SLICE)
-                raise ServiceError("ACE material changed; slice invalidated and re-slice required")
+                raise ServiceError(
+                    "ACE material changed; slice invalidated and re-slice required"
+                )
             if slot.spool_loaded is False:
                 raise ServiceError("selected ACE slot is empty")
             if slot.rgb != record.approved_slot_snapshot.rgb:
@@ -433,7 +528,9 @@ class AppService:
                 record.approved_slot_snapshot = None
                 record.table_clear_confirmed = False
                 self._transition(record, JobState.AWAITING_CONFIRMATION)
-                raise ServiceError("ACE color changed; preview/mapping updated and human confirmation is required again")
+                raise ServiceError(
+                    "ACE color changed; preview/mapping updated and human confirmation is required again"
+                )
             record.ace_snapshot = fresh_ace
             record.selected_slot = slot
             return record, info, ha, slot, upload_device_id
@@ -454,13 +551,20 @@ class AppService:
         except FileNotFoundError:
             # Keep the validation boundary at preflight for an invalid/missing job.
             return await self.preflight(job_id)
-        if existing.start_publish_state != StartPublishState.NOT_ATTEMPTED or existing.start_attempt_id:
-            raise ServiceError("print/start was already intended for this job; it will only be reconciled")
+        if (
+            existing.start_publish_state != StartPublishState.NOT_ATTEMPTED
+            or existing.start_attempt_id
+        ):
+            raise ServiceError(
+                "print/start was already intended for this job; it will only be reconciled"
+            )
         record, info, _ha, slot, upload_device_id = await self.preflight(job_id)
         assert self.lan and record.approved_gcode_sha256
         directory = self.store.job_dir(job_id)
         gcode = directory / "output.gcode"
-        remote_filename = sanitize_filename(f"kx_{job_id[:8]}_{Path(record.original_filename).stem}.gcode")
+        remote_filename = sanitize_filename(
+            f"kx_{job_id[:8]}_{Path(record.original_filename).stem}.gcode"
+        )
         upload_url = extract_upload_url(info)
         self._transition(record, JobState.UPLOADING_TO_PRINTER)
         uploader = DirectLanFileTransfer(
@@ -490,7 +594,11 @@ class AppService:
             "taskid": str(int(time.time())),
             "use_ams": True,
             "ams_box_mapping": [
-                {"slot_index": slot.protocol_slot_index, "material_type": "PLA", "color": rgb}
+                {
+                    "slot_index": slot.protocol_slot_index,
+                    "material_type": "PLA",
+                    "color": rgb,
+                }
             ],
         }
         record.start_publish_state = StartPublishState.PUBLISH_ATTEMPTED
@@ -505,7 +613,11 @@ class AppService:
             return record
 
         # Critical idempotency rule: never publish print/start a second time.
-        record.start_publish_state = StartPublishState.ACK_REJECTED if result.ack_received else StartPublishState.DELIVERY_UNKNOWN
+        record.start_publish_state = (
+            StartPublishState.ACK_REJECTED
+            if result.ack_received
+            else StartPublishState.DELIVERY_UNKNOWN
+        )
         record.state = JobState.START_UNKNOWN
         record.error = "print/start delivery/ACK uncertain; command will not be retried"
         self._save(record)
@@ -519,8 +631,14 @@ class AppService:
         except ServiceError:
             return
         observed_name = Path(snapshot.job.name).name if snapshot.job.name else None
-        expected_name = Path(record.remote_filename).name if record.remote_filename else None
-        active = snapshot.busy is True or snapshot.job.in_progress is True or snapshot.job.state in ACTIVE_STATES
+        expected_name = (
+            Path(record.remote_filename).name if record.remote_filename else None
+        )
+        active = (
+            snapshot.busy is True
+            or snapshot.job.in_progress is True
+            or snapshot.job.state in ACTIVE_STATES
+        )
         if active and observed_name == expected_name:
             if record.state == JobState.START_UNKNOWN:
                 self._transition(record, JobState.PRINT_ACCEPTED)
@@ -530,13 +648,29 @@ class AppService:
 
     async def _apply_observed_job_state(self, record: JobRecord, snapshot: Any) -> None:
         """Persist actual HA job transitions after a correlated start."""
-        if snapshot.job.failed is True and record.state in {JobState.PRINT_ACCEPTED, JobState.MONITORING, JobState.PRINTING, JobState.PAUSED}:
+        if snapshot.job.failed is True and record.state in {
+            JobState.PRINT_ACCEPTED,
+            JobState.MONITORING,
+            JobState.PRINTING,
+            JobState.PAUSED,
+        }:
             self._transition(record, JobState.FAILED)
-        elif snapshot.job.complete is True and record.state in {JobState.PRINT_ACCEPTED, JobState.MONITORING, JobState.PRINTING, JobState.PAUSED}:
+        elif snapshot.job.complete is True and record.state in {
+            JobState.PRINT_ACCEPTED,
+            JobState.MONITORING,
+            JobState.PRINTING,
+            JobState.PAUSED,
+        }:
             self._transition(record, JobState.COMPLETED)
-        elif snapshot.job.paused is True and record.state in {JobState.PRINT_ACCEPTED, JobState.MONITORING, JobState.PRINTING}:
+        elif snapshot.job.paused is True and record.state in {
+            JobState.PRINT_ACCEPTED,
+            JobState.MONITORING,
+            JobState.PRINTING,
+        }:
             self._transition(record, JobState.PAUSED)
-        elif (snapshot.job.in_progress is True or snapshot.busy is True) and record.state in {JobState.PRINT_ACCEPTED, JobState.MONITORING}:
+        elif (
+            snapshot.job.in_progress is True or snapshot.busy is True
+        ) and record.state in {JobState.PRINT_ACCEPTED, JobState.MONITORING}:
             self._transition(record, JobState.PRINTING)
 
     async def reconcile_active_jobs(self) -> list[JobRecord]:
@@ -545,7 +679,9 @@ class AppService:
         for record in records:
             if record.state == JobState.SLICING:
                 record.state = JobState.FAILED_RECOVERABLE
-                record.error = "slicing interrupted by restart; verify artifacts and slice again"
+                record.error = (
+                    "slicing interrupted by restart; verify artifacts and slice again"
+                )
                 self._save(record)
                 continue
             if record.state == JobState.PREFLIGHT:
@@ -563,9 +699,15 @@ class AppService:
                 self._transition(record, JobState.START_UNKNOWN)
             if record.state in {JobState.START_UNKNOWN, JobState.PRINT_ACCEPTED}:
                 await self._reconcile_started(record)
-            elif record.state in {JobState.MONITORING, JobState.PRINTING, JobState.PAUSED}:
+            elif record.state in {
+                JobState.MONITORING,
+                JobState.PRINTING,
+                JobState.PAUSED,
+            }:
                 try:
-                    await self._apply_observed_job_state(record, await self.printer_snapshot())
+                    await self._apply_observed_job_state(
+                        record, await self.printer_snapshot()
+                    )
                 except ServiceError:
                     pass
         return [self.job(record.id) for record in records]
@@ -576,16 +718,26 @@ class AppService:
 
     async def _control_locked(self, job_id: str, action: str) -> JobRecord:
         record = self.job(job_id)
-        if record.state not in {JobState.MONITORING, JobState.PRINT_ACCEPTED, JobState.START_UNKNOWN}:
+        if record.state not in {
+            JobState.MONITORING,
+            JobState.PRINT_ACCEPTED,
+            JobState.START_UNKNOWN,
+        }:
             raise ServiceError(f"cannot {action} in job state {record.state.value}")
         snapshot = await self.printer_snapshot()
         if snapshot.stale:
-            raise ServiceError("cannot control printer while Home Assistant state is stale")
-        if action == "pause" and not (snapshot.job.in_progress is True and snapshot.job.paused is False):
+            raise ServiceError(
+                "cannot control printer while Home Assistant state is stale"
+            )
+        if action == "pause" and not (
+            snapshot.job.in_progress is True and snapshot.job.paused is False
+        ):
             raise ServiceError("pause is valid only while printing")
         if action == "resume" and snapshot.job.paused is not True:
             raise ServiceError("resume is valid only while paused")
-        if action == "cancel" and not (snapshot.job.in_progress is True or snapshot.busy is True):
+        if action == "cancel" and not (
+            snapshot.job.in_progress is True or snapshot.busy is True
+        ):
             raise ServiceError("cancel is valid only while a job is active")
         try:
             outcome = await self._ha_adapter().press(action)
@@ -598,7 +750,11 @@ class AppService:
                 observed = await self.printer_snapshot()
                 outcome["observed_state"] = observed.status
                 outcome["observed_paused"] = observed.job.paused
-                outcome["confirmed"] = (action == "pause" and observed.job.paused is True) or (action == "resume" and observed.job.paused is False) or (action == "cancel" and observed.busy is False)
+                outcome["confirmed"] = (
+                    (action == "pause" and observed.job.paused is True)
+                    or (action == "resume" and observed.job.paused is False)
+                    or (action == "cancel" and observed.busy is False)
+                )
                 if outcome["confirmed"]:
                     outcome["confirmed_at"] = _utcnow().isoformat()
                     break

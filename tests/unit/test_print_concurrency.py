@@ -1,6 +1,5 @@
 import asyncio
 from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -15,9 +14,15 @@ def _record(service: AppService, job_id: str) -> JobRecord:
     directory = service.store.create_dir(job_id)
     (directory / "output.gcode").write_text("G1 X1", encoding="utf-8")
     record = JobRecord(
-        id=job_id, original_filename="cube.stl", input_filename="input.stl", input_type="stl",
-        state=JobState.AWAITING_CONFIRMATION, created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
-        approved_gcode_sha256="approved", table_clear_confirmed=True,
+        id=job_id,
+        original_filename="cube.stl",
+        input_filename="input.stl",
+        input_type="stl",
+        state=JobState.AWAITING_CONFIRMATION,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        approved_gcode_sha256="approved",
+        table_clear_confirmed=True,
     )
     service.store.save(record)
     return record
@@ -41,18 +46,32 @@ async def test_concurrent_calls_for_one_job_publish_once(monkeypatch, tmp_path):
         record = service.job(job_id)
         record.state = JobState.PREFLIGHT
         service.store.save(record)
-        return record, {"data": {"urls": {"fileUploadurl": "http://127.0.0.1:18910/gcode_upload?s=x"}}}, None, AceSlot(human_slot=1, protocol_slot_index=0, material_type="PLA"), "printer"
+        return (
+            record,
+            {
+                "data": {
+                    "urls": {"fileUploadurl": "http://127.0.0.1:18910/gcode_upload?s=x"}
+                }
+            },
+            None,
+            AceSlot(human_slot=1, protocol_slot_index=0, material_type="PLA"),
+            "printer",
+        )
 
     async def start_once(payload):
         nonlocal calls
         calls += 1
         await asyncio.sleep(0.02)
-        return PrintStartResult(sent=True, ack_received=False, accepted=False, unknown=True)
+        return PrintStartResult(
+            sent=True, ack_received=False, accepted=False, unknown=True
+        )
 
     service.lan = SimpleNamespace(publish_print_start_once=start_once)
     monkeypatch.setattr(service, "preflight", preflight)
     with patch("app.core.service.DirectLanFileTransfer", _Upload):
-        results = await asyncio.gather(service.print("one"), service.print("one"), return_exceptions=True)
+        results = await asyncio.gather(
+            service.print("one"), service.print("one"), return_exceptions=True
+        )
     assert calls == 1
     assert sum(isinstance(result, ServiceError) for result in results) == 1
     record = service.job("one")
@@ -71,7 +90,17 @@ async def test_two_jobs_do_not_overlap_start_transactions(monkeypatch, tmp_path)
         record = service.job(job_id)
         record.state = JobState.PREFLIGHT
         service.store.save(record)
-        return record, {"data": {"urls": {"fileUploadurl": "http://127.0.0.1:18910/gcode_upload?s=x"}}}, None, AceSlot(human_slot=1, protocol_slot_index=0, material_type="PLA"), "printer"
+        return (
+            record,
+            {
+                "data": {
+                    "urls": {"fileUploadurl": "http://127.0.0.1:18910/gcode_upload?s=x"}
+                }
+            },
+            None,
+            AceSlot(human_slot=1, protocol_slot_index=0, material_type="PLA"),
+            "printer",
+        )
 
     async def start_once(payload):
         nonlocal active, maximum, calls
@@ -80,7 +109,9 @@ async def test_two_jobs_do_not_overlap_start_transactions(monkeypatch, tmp_path)
         maximum = max(maximum, active)
         await asyncio.sleep(0.02)
         active -= 1
-        return PrintStartResult(sent=True, ack_received=False, accepted=False, unknown=True)
+        return PrintStartResult(
+            sent=True, ack_received=False, accepted=False, unknown=True
+        )
 
     service.lan = SimpleNamespace(publish_print_start_once=start_once)
     monkeypatch.setattr(service, "preflight", preflight)

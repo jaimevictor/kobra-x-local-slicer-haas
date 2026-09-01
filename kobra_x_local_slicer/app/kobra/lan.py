@@ -39,7 +39,9 @@ class ValidatedLegacyLanStart:
     def connected(self) -> bool:
         return self._in_flight
 
-    async def upload_bootstrap(self, *, timeout: float = 10.0) -> tuple[dict[str, Any], str]:
+    async def upload_bootstrap(
+        self, *, timeout: float = 10.0
+    ) -> tuple[dict[str, Any], str]:
         """Obtain only the printer-supplied upload URL, then close LAN immediately."""
         loop = asyncio.get_running_loop()
         future: asyncio.Future[dict[str, Any]] = loop.create_future()
@@ -65,7 +67,9 @@ class ValidatedLegacyLanStart:
             await http.close()
             self._in_flight = False
 
-    async def publish_print_start_once(self, data: dict[str, Any], *, ack_timeout: float = 10.0) -> PrintStartResult:
+    async def publish_print_start_once(
+        self, data: dict[str, Any], *, ack_timeout: float = 10.0
+    ) -> PrintStartResult:
         self._in_flight = True
         http = aiohttp.ClientSession()
         try:
@@ -97,7 +101,11 @@ def _ssl_context() -> ssl.SSLContext:
 
 def _client(client_id: str) -> mqtt.Client:
     try:
-        return mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=client_id, reconnect_on_failure=False)
+        return mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION1,
+            client_id=client_id,
+            reconnect_on_failure=False,
+        )
     except (AttributeError, TypeError):
         c = mqtt.Client(client_id=client_id)
         # paho 1.x has no reconnect_on_failure constructor switch; the manual loop below never calls reconnect.
@@ -172,27 +180,54 @@ def publish_once_no_retry(
         while not subscribed.is_set() and time.monotonic() < deadline:
             c.loop(timeout=0.1)
         if not subscribed.is_set():
-            raise KobraLanError("one-shot MQTT could not establish subscribed connection")
-        info = c.publish(query_topic, json.dumps(envelope, separators=(",", ":")), qos=0, retain=False)
+            raise KobraLanError(
+                "one-shot MQTT could not establish subscribed connection"
+            )
+        info = c.publish(
+            query_topic,
+            json.dumps(envelope, separators=(",", ":")),
+            qos=0,
+            retain=False,
+        )
         sent = True
         if info.rc != mqtt.MQTT_ERR_SUCCESS:
             # publish was attempted; do not retry because physical delivery is uncertain.
-            return PrintStartResult(sent=True, ack_received=False, accepted=False, unknown=True)
+            return PrintStartResult(
+                sent=True, ack_received=False, accepted=False, unknown=True
+            )
         deadline = time.monotonic() + ack_timeout
-        while not ack.is_set() and time.monotonic() < deadline and not disconnected_after_send.is_set():
+        while (
+            not ack.is_set()
+            and time.monotonic() < deadline
+            and not disconnected_after_send.is_set()
+        ):
             c.loop(timeout=0.1)
         if not ack.is_set():
-            return PrintStartResult(sent=True, ack_received=False, accepted=False, unknown=True)
+            return PrintStartResult(
+                sent=True, ack_received=False, accepted=False, unknown=True
+            )
         assert ack_payload is not None
-        state = str(ack_payload.get("state") or (ack_payload.get("data") or {}).get("state") or "").lower()
+        state = str(
+            ack_payload.get("state")
+            or (ack_payload.get("data") or {}).get("state")
+            or ""
+        ).lower()
         code = ack_payload.get("code")
         if code is None and isinstance(ack_payload.get("data"), dict):
             code = ack_payload["data"].get("code")
         accepted = code == 200 and state in {"checking", "heating", "printing"}
-        return PrintStartResult(sent=True, ack_received=True, accepted=accepted, unknown=not accepted, raw_ack=ack_payload)
+        return PrintStartResult(
+            sent=True,
+            ack_received=True,
+            accepted=accepted,
+            unknown=not accepted,
+            raw_ack=ack_payload,
+        )
     except Exception:
         if sent:
-            return PrintStartResult(sent=True, ack_received=False, accepted=False, unknown=True)
+            return PrintStartResult(
+                sent=True, ack_received=False, accepted=False, unknown=True
+            )
         raise
     finally:
         try:

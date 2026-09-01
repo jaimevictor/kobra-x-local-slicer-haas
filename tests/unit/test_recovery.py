@@ -3,21 +3,28 @@ from datetime import UTC, datetime
 import pytest
 
 from app.core.config import Settings
-from app.core.models import JobRecord, JobState, StartPublishState
+from app.core.models import JobRecord, JobState
 from app.core.service import AppService, ServiceError
 
 
 def _job(service, job_id, state):
     service.store.create_dir(job_id)
     record = JobRecord(
-        id=job_id, original_filename="cube.stl", input_filename="input.stl", input_type="stl",
-        state=state, created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
+        id=job_id,
+        original_filename="cube.stl",
+        input_filename="input.stl",
+        input_type="stl",
+        state=state,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
     service.store.save(record)
 
 
 @pytest.mark.asyncio
-async def test_restart_recovers_transient_states_without_starting(monkeypatch, tmp_path):
+async def test_restart_recovers_transient_states_without_starting(
+    monkeypatch, tmp_path
+):
     service = AppService(Settings(data_dir=tmp_path))
     _job(service, "slice", JobState.SLICING)
     _job(service, "preflight", JobState.PREFLIGHT)
