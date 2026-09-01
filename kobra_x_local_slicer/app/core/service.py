@@ -363,12 +363,18 @@ class AppService:
             ha = await self.printer_snapshot()
             if ha.stale or not ha.essential_entities_available:
                 raise ServiceError("Home Assistant printer state is stale or incomplete")
-            if ha.online is not True or ha.available is not True or ha.busy is not False or ha.job.paused is True:
+            if ha.online is not True or ha.available is not True or ha.busy is not False or ha.job.in_progress is not False or ha.job.paused is True:
                 raise ServiceError(f"Home Assistant reports printer unavailable/busy: {ha.model_dump()}")
             if ha.status is None or ha.status.lower() not in FREE_STATES:
                 raise ServiceError(f"Home Assistant printer state is not free/available: {ha.status}")
-            if ha.fault.code or ha.fault.message:
-                raise ServiceError(f"Home Assistant reports printer fault: {ha.fault.code or ha.fault.message}")
+            if ha.fault.active is True:
+                raise ServiceError("Home Assistant reports an active print failure")
+            baseline_fault = record.printer_snapshot_at_slice.fault if record.printer_snapshot_at_slice else None
+            if baseline_fault and (
+                ha.fault.last_error_code != baseline_fault.last_error_code
+                or ha.fault.last_error_message != baseline_fault.last_error_message
+            ):
+                raise ServiceError("a new historical printer error appeared after slicing; confirmation is required")
             fresh_ace = ha.ace
             if fresh_ace is None:
                 raise ServiceError("ACE unavailable from Home Assistant")
@@ -386,8 +392,6 @@ class AppService:
                 raise ServiceError("ACE material changed; slice invalidated and re-slice required")
             if slot.spool_loaded is False:
                 raise ServiceError("selected ACE slot is empty")
-            if fresh_ace.loaded_slot is not None and fresh_ace.loaded_slot != slot.human_slot:
-                raise ServiceError("selected ACE slot is no longer the loaded slot")
             if slot.rgb != record.approved_slot_snapshot.rgb:
                 record.selected_slot = slot
                 record.approved_gcode_sha256 = None

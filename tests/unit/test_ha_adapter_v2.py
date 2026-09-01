@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -7,6 +7,10 @@ from app.ha.client import AnycubicHomeAssistantAdapter, suggest_entity_map
 
 def _row(state, **attributes):
     return {"state": state, "attributes": attributes, "last_updated": datetime.now(UTC).isoformat()}
+
+
+def _old_row(state, **attributes):
+    return {"state": state, "attributes": attributes, "last_updated": (datetime.now(UTC) - timedelta(minutes=10)).isoformat()}
 
 
 def test_entity_id_text_is_never_used_as_a_fallback():
@@ -56,6 +60,46 @@ async def test_snapshot_keeps_unknown_false_and_zero_distinct(monkeypatch):
     assert snapshot.job.progress == 0.0
     assert snapshot.job.paused is None
     assert snapshot.capabilities["local_start_via_ha"] is False
+
+
+@pytest.mark.asyncio
+async def test_successful_idle_snapshot_is_fresh_despite_old_entity_timestamps(monkeypatch):
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
+    adapter = AnycubicHomeAssistantAdapter("printer")
+    states = {
+        "printer_online": _old_row("on"), "is_available": _old_row("on"), "is_busy": _old_row("off"),
+        "job_in_progress": _old_row("off"), "current_status": _old_row("idle"), "job_name": _old_row("none"),
+        "last_error_code": _old_row("10107"), "last_error": _old_row("historical"), "job_failed": _old_row("off"),
+    }
+
+    async def fake_states():
+        return states
+
+    monkeypatch.setattr(adapter, "_states", fake_states)
+    snapshot = await adapter.snapshot()
+    assert snapshot.stale is False
+    assert snapshot.snapshot_received_at > snapshot.observed_at
+    assert snapshot.essential_entities_available is True
+    assert snapshot.fault.active is False
+    assert snapshot.fault.historical is True
+
+
+@pytest.mark.asyncio
+async def test_essential_unavailable_is_not_usable(monkeypatch):
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
+    adapter = AnycubicHomeAssistantAdapter("printer")
+    states = {
+        "printer_online": _row("on"), "is_available": _row("unavailable"), "is_busy": _row("off"),
+        "job_in_progress": _row("off"), "current_status": _row("idle"), "job_name": _row("none"),
+    }
+
+    async def fake_states():
+        return states
+
+    monkeypatch.setattr(adapter, "_states", fake_states)
+    snapshot = await adapter.snapshot()
+    assert snapshot.essential_entities_available is False
+    assert snapshot.entity_availability["is_available"] == "unavailable"
 
 
 @pytest.mark.asyncio

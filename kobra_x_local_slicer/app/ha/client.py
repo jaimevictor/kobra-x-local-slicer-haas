@@ -97,6 +97,24 @@ def _integer(value: Any) -> int | None:
     return int(value) if value is not None else None
 
 
+def _availability(row: dict[str, Any] | None) -> str:
+    if row is None:
+        return "missing"
+    value = _state(row)
+    if value is None:
+        return "missing"
+    normalized = str(value).strip().lower()
+    if normalized == "unavailable":
+        return "unavailable"
+    if normalized == "unknown":
+        return "unknown"
+    return "available"
+
+
+def _list(value: Any) -> list[Any] | None:
+    return value if isinstance(value, list) else None
+
+
 def _state(row: dict[str, Any] | None) -> Any:
     return row.get("state") if isinstance(row, dict) else None
 
@@ -266,7 +284,14 @@ class AnycubicHomeAssistantAdapter:
                 consumables_percent=_number(attrs.get("consumables_percent")), raw_state=None if value is None else str(value),
             ))
             parsed.append({"state": value, "attributes": attrs})
-        return AceSnapshot(raw={key: row for key, row in states.items() if key.startswith("ace_")}, parsed=parsed, normalized=slots, loaded_slot=loaded_slot)
+        return AceSnapshot(
+            raw={key: row for key, row in states.items() if key.startswith("ace_")},
+            parsed=parsed,
+            normalized=slots,
+            loaded_slot=loaded_slot,
+            current_temperature=_number(_state(states.get("ace_current_temperature"))),
+            dry_status_is_drying=_bool(_state(states.get("dry_status_is_drying"))),
+        )
 
     async def snapshot(self) -> PrinterSnapshot:
         states = await self._states()
@@ -280,12 +305,16 @@ class AnycubicHomeAssistantAdapter:
                 except ValueError:
                     pass
         observed_at = max(dates) if dates else now
-        essential = set(ESSENTIAL_KEYS).issubset(states)
+        availability = {key: _availability(states.get(key)) for key in set(self.entities) | set(ESSENTIAL_KEYS)}
+        essential = all(availability.get(key) == "available" for key in ESSENTIAL_KEYS)
         status = _state(states.get("current_status")) or _state(states.get("job_state"))
         return PrinterSnapshot(
             integration_version=self.integration_version, printer_device_id=self.printer_device_id, observed_at=observed_at,
-            stale=not essential or (now - observed_at).total_seconds() > self.stale_after_seconds,
-            ha_connected=True, essential_entities_available=essential,
+            snapshot_received_at=now, last_health_check_at=now,
+            # A successful HA snapshot is fresh even if the printer has been idle
+            # and none of its entity values changed recently.
+            stale=False, ha_connected=True, essential_entities_available=essential,
+            entity_availability=availability,
             online=_bool(_state(states.get("printer_online"))), available=_bool(_state(states.get("is_available"))),
             busy=_bool(_state(states.get("is_busy"))), status=None if _unknown(status) else str(status),
             job=PrinterJobSnapshot(
@@ -295,9 +324,22 @@ class AnycubicHomeAssistantAdapter:
                 total_layers=_integer(_state(states.get("job_total_layers"))), elapsed_minutes=_number(_state(states.get("job_time_elapsed"))),
                 remaining_minutes=_number(_state(states.get("job_time_remaining"))), eta=None if _unknown(_state(states.get("job_eta"))) else str(_state(states.get("job_eta"))),
                 paused=_bool(_state(states.get("job_is_paused"))),
+                in_progress=_bool(_state(states.get("job_in_progress"))),
+                complete=_bool(_state(states.get("job_complete"))),
+                failed=_bool(_state(states.get("job_failed"))),
             ),
             thermal=PrinterThermalSnapshot(nozzle_current=_number(_state(states.get("curr_nozzle_temp"))), nozzle_target=_number(_state(states.get("target_nozzle_temp"))), bed_current=_number(_state(states.get("curr_hotbed_temp"))), bed_target=_number(_state(states.get("target_hotbed_temp")))),
-            ace=self._ace(states), fault=PrinterFaultSnapshot(code=None if _unknown(_state(states.get("last_error_code"))) else str(_state(states.get("last_error_code"))), message=None if _unknown(_state(states.get("last_error"))) else str(_state(states.get("last_error")))),
+            print_speed_pct=_number(_state(states.get("print_speed_pct"))), fan_speed_pct=_number(_state(states.get("fan_speed_pct"))),
+            aux_fan_speed_pct=_number(_state(states.get("aux_fan_speed_pct"))), box_fan_level=_number(_state(states.get("box_fan_level"))),
+            local_files=_list(_state(states.get("file_list_local"))), job_image_url=None if _unknown(_state(states.get("job_image_url"))) else str(_state(states.get("job_image_url"))),
+            ace=self._ace(states),
+            fault=PrinterFaultSnapshot(
+                active=_bool(_state(states.get("job_failed"))),
+                job_failed=_bool(_state(states.get("job_failed"))),
+                last_error_code=None if _unknown(_state(states.get("last_error_code"))) else str(_state(states.get("last_error_code"))),
+                last_error_message=None if _unknown(_state(states.get("last_error"))) else str(_state(states.get("last_error"))),
+                historical=bool(_state(states.get("last_error_code")) or _state(states.get("last_error"))),
+            ),
             capabilities=self.capabilities(states),
         )
 

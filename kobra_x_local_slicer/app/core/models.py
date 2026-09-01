@@ -58,6 +58,8 @@ class AceSnapshot(BaseModel):
     parsed: list[dict[str, Any]]
     normalized: list[AceSlot]
     loaded_slot: int | None = None
+    current_temperature: float | None = None
+    dry_status_is_drying: bool | None = None
 
 
 class PrinterJobSnapshot(BaseModel):
@@ -70,6 +72,9 @@ class PrinterJobSnapshot(BaseModel):
     remaining_minutes: float | None = None
     eta: str | None = None
     paused: bool | None = None
+    in_progress: bool | None = None
+    complete: bool | None = None
+    failed: bool | None = None
 
 
 class PrinterThermalSnapshot(BaseModel):
@@ -80,8 +85,11 @@ class PrinterThermalSnapshot(BaseModel):
 
 
 class PrinterFaultSnapshot(BaseModel):
-    code: str | None = None
-    message: str | None = None
+    active: bool | None = None
+    job_failed: bool | None = None
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    historical: bool | None = None
 
 
 class PrinterSnapshot(BaseModel):
@@ -89,15 +97,24 @@ class PrinterSnapshot(BaseModel):
     integration_version: str | None = None
     printer_device_id: str | None = None
     observed_at: datetime
+    snapshot_received_at: datetime
+    last_health_check_at: datetime | None = None
     stale: bool
     ha_connected: bool
     essential_entities_available: bool
+    entity_availability: dict[str, str] = Field(default_factory=dict)
     online: bool | None = None
     available: bool | None = None
     busy: bool | None = None
     status: str | None = None
     job: PrinterJobSnapshot = Field(default_factory=PrinterJobSnapshot)
     thermal: PrinterThermalSnapshot = Field(default_factory=PrinterThermalSnapshot)
+    print_speed_pct: float | None = None
+    fan_speed_pct: float | None = None
+    aux_fan_speed_pct: float | None = None
+    box_fan_level: float | None = None
+    local_files: list[Any] | None = None
+    job_image_url: str | None = None
     ace: AceSnapshot | None = None
     fault: PrinterFaultSnapshot = Field(default_factory=PrinterFaultSnapshot)
     capabilities: dict[str, bool] = Field(default_factory=dict)
