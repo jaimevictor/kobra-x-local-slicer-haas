@@ -21,8 +21,15 @@ class OrcaRunner:
   settings=json.loads(process.read_text(encoding='utf-8'));settings['enable_support']='1'
   enabled=directory/'process_with_supports.json';enabled.write_text(json.dumps(settings),encoding='utf-8')
   return enabled
+ def _clear_previous_gcode(self,directory:Path)->None:
+  for previous in directory.glob('*.gcode'):
+   if previous.is_file(): previous.unlink()
  async def slice(self,input_path:Path,directory:Path,orientation:Orientation,supports_enabled:bool=False)->Path:
   out=directory/'output.gcode'; machine=self._profile('kobra_x_04.resolved.json');process=self._process_for_slice(directory,supports_enabled);filament=self._profile('anycubic_pla_kobra_x.resolved.json')
+  # A re-slice happens in the same job directory. Orca writes plate_1.gcode,
+  # while the previous successful result is normalized to output.gcode; both
+  # must not be considered outputs of the new invocation.
+  self._clear_previous_gcode(directory)
   # Verified with OrcaSlicer 2.4.2 --help in the built image.
   cmd=[self.app,'--load-settings',f'{machine};{process}','--load-filaments',str(filament),'--ensure-on-bed','--outputdir',str(directory),'--slice','0',str(input_path)]
   if orientation==Orientation.ROTATE_X_90: cmd.extend(['--rotate-x','90'])
