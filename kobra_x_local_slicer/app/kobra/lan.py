@@ -6,7 +6,6 @@ import ssl
 import threading
 import time
 import uuid
-from collections import defaultdict
 from typing import Any
 
 import aiohttp
@@ -30,76 +29,59 @@ class ValidatedLegacyLanStart:
 
     def __init__(self, host: str):
         self.host = host
-        self.http: aiohttp.ClientSession | None = None
-        self.broker: AnycubicLANBroker | None = None
-        self.client: AnycubicLANClient | None = None
-        self.loop: asyncio.AbstractEventLoop | None = None
-        self.waiters: dict[str, list[asyncio.Future]] = defaultdict(list)
-        self.latest: dict[str, dict[str, Any]] = {}
-
-    def _on_message(self, topic: str, message_type: str, payload: dict[str, Any]) -> None:
-        if self.loop is None:
-            return
-        def deliver() -> None:
-            self.latest[message_type] = payload
-            waiting = self.waiters.get(message_type, [])
-            self.waiters[message_type] = []
-            for fut in waiting:
-                if not fut.done():
-                    fut.set_result(payload)
-        self.loop.call_soon_threadsafe(deliver)
-
-    async def connect(self) -> None:
-        if self.client and self.client.is_connected:
-            return
-        self.loop = asyncio.get_running_loop()
-        self.http = aiohttp.ClientSession()
-        handshake = AnycubicLANHandshake(self.http, self.host)
-        self.broker = await handshake.async_authenticate()
-        self.client = AnycubicLANClient(self.broker, self._on_message)
-        await self.client.async_connect()
+        self._in_flight = False
 
     async def close(self) -> None:
-        if self.client:
-            await self.client.async_disconnect()
-        if self.http:
-            await self.http.close()
-        self.client = None
-        self.http = None
-        self.broker = None
+        # Connections are strictly scoped to each operation.
+        return None
 
     @property
     def connected(self) -> bool:
-        return bool(self.client and self.client.is_connected)
+        return self._in_flight
 
-    async def query(self, message_type: str, *, timeout: float = 10.0) -> dict[str, Any]:
-        await self.connect()
-        assert self.client is not None
+    async def upload_bootstrap(self, *, timeout: float = 10.0) -> tuple[dict[str, Any], str]:
+        """Obtain only the printer-supplied upload URL, then close LAN immediately."""
         loop = asyncio.get_running_loop()
-        fut = loop.create_future()
-        self.waiters[message_type].append(fut)
-        self.client.query(message_type)
-        try:
-            return await asyncio.wait_for(fut, timeout=timeout)
-        except TimeoutError as exc:
-            if fut in self.waiters.get(message_type, []):
-                self.waiters[message_type].remove(fut)
-            raise KobraLanError(f"timeout waiting for {message_type} report") from exc
+        future: asyncio.Future[dict[str, Any]] = loop.create_future()
 
-    async def query_info(self) -> dict[str, Any]:
-        return await self.query("info")
+        def on_message(topic: str, message_type: str, payload: dict[str, Any]) -> None:
+            if message_type == "info" and not future.done():
+                loop.call_soon_threadsafe(future.set_result, payload)
+
+        self._in_flight = True
+        http = aiohttp.ClientSession()
+        client: AnycubicLANClient | None = None
+        try:
+            broker = await AnycubicLANHandshake(http, self.host).async_authenticate()
+            client = AnycubicLANClient(broker, on_message)
+            await client.async_connect()
+            client.query("info")
+            return await asyncio.wait_for(future, timeout), broker.device_id
+        except TimeoutError as exc:
+            raise KobraLanError("timeout waiting for upload bootstrap info") from exc
+        finally:
+            if client:
+                await client.async_disconnect()
+            await http.close()
+            self._in_flight = False
 
     async def publish_print_start_once(self, data: dict[str, Any], *, ack_timeout: float = 10.0) -> PrintStartResult:
-        await self.connect()
-        assert self.broker is not None and self.client is not None
-        return await asyncio.to_thread(
-            publish_once_no_retry,
-            self.broker,
-            self.client.query_topic("print"),
-            self.client.report_topic,
-            data,
-            ack_timeout,
-        )
+        self._in_flight = True
+        http = aiohttp.ClientSession()
+        try:
+            broker = await AnycubicLANHandshake(http, self.host).async_authenticate()
+            client = AnycubicLANClient(broker, lambda *_: None)
+            return await asyncio.to_thread(
+                publish_once_no_retry,
+                broker,
+                client.query_topic("print"),
+                client.report_topic,
+                data,
+                ack_timeout,
+            )
+        finally:
+            await http.close()
+            self._in_flight = False
 
 
 # Compatibility alias; new code should use ValidatedLegacyLanStart.

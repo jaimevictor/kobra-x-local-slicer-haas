@@ -15,7 +15,7 @@ async def lifespan(app: FastAPI):
  if app.state.settings.ha_device_id:
   # Recovery is observation-only. A missing/incompatible integration remains
   # visible through the printer integration endpoint and never enables a LAN poller.
-  try: await app.state.service.reconcile_active_jobs()
+  try: await app.state.service.start()
   except Exception as exc: app.state.integration_error=str(exc)
  yield
  await app.state.service.close()

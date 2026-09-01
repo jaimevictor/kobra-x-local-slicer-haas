@@ -7,6 +7,7 @@ or parses the printer MQTT payload.
 from __future__ import annotations
 
 import os
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -149,6 +150,32 @@ class AnycubicHomeAssistantAdapter:
         self.ace_device_ids: list[str] = []
         # The public registries have no reliable custom-component version field.
         self.integration_version: str | None = None
+        self.version_detection = "unsupported"
+        self._state_cache: dict[str, dict[str, Any]] | None = None
+        self._watch_task: asyncio.Task[None] | None = None
+        self._stop_event = asyncio.Event()
+        self.ws_connected = False
+        self.last_health_check_at: datetime | None = None
+
+    async def start(self) -> None:
+        """Resolve once, hydrate a state cache, then keep it live via HA events."""
+        if self._watch_task and not self._watch_task.done():
+            return
+        self._stop_event.clear()
+        await self.resolve()
+        await self._refresh_states()
+        self._watch_task = asyncio.create_task(self._watch_state_changes())
+
+    async def close(self) -> None:
+        self._stop_event.set()
+        if self._watch_task:
+            self._watch_task.cancel()
+            try:
+                await self._watch_task
+            except asyncio.CancelledError:
+                pass
+        self._watch_task = None
+        self.ws_connected = False
 
     async def _ws(self, commands: list[tuple[str, dict[str, Any]]]) -> list[Any]:
         try:
@@ -211,6 +238,7 @@ class AnycubicHomeAssistantAdapter:
         if not any(row.get("device_id") == self.printer_device_id for row in rows):
             raise HomeAssistantError("selected device has no anycubic_cloud entities")
         self.entities = {}
+        self._state_cache = None
         valid_keys = set(PRINTER_KEYS + ACE_KEYS)
         for row in rows:
             key, entity_id = _translation_key(row), row.get("entity_id")
@@ -219,6 +247,11 @@ class AnycubicHomeAssistantAdapter:
         self.ace_device_ids = [ident for ident in children if any(row.get("device_id") == ident and _translation_key(row) in ACE_KEYS for row in rows)]
 
     async def _states(self) -> dict[str, dict[str, Any]]:
+        if self._state_cache is not None and self.ws_connected:
+            return dict(self._state_cache)
+        return await self._refresh_states()
+
+    async def _refresh_states(self) -> dict[str, dict[str, Any]]:
         if not self.entities:
             await self.resolve()
         # Home Assistant's websocket state stream is the normal path.  A single
@@ -226,7 +259,10 @@ class AnycubicHomeAssistantAdapter:
         try:
             all_states, = await self._ws([("get_states", {})])
             by_entity = {row.get("entity_id"): row for row in all_states if isinstance(row, dict)}
-            return {key: by_entity[entity_id] for key, entity_id in self.entities.items() if isinstance(by_entity.get(entity_id), dict)}
+            states = {key: by_entity[entity_id] for key, entity_id in self.entities.items() if isinstance(by_entity.get(entity_id), dict)}
+            self._state_cache = states
+            self.last_health_check_at = datetime.now(UTC)
+            return dict(states)
         except HomeAssistantError:
             # REST is a health/recovery fallback only; it never contacts Kobra X.
             pass
@@ -244,7 +280,66 @@ class AnycubicHomeAssistantAdapter:
                         states[key] = payload
         except httpx.HTTPError as exc:
             raise HomeAssistantError(f"Home Assistant state read failed: {exc}") from exc
-        return states
+        self._state_cache = states
+        self.last_health_check_at = datetime.now(UTC)
+        return dict(states)
+
+    async def _watch_state_changes(self) -> None:
+        """Persistent HA subscription with bounded reconnect backoff and resubscribe."""
+        backoff = 1.0
+        while not self._stop_event.is_set():
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.ws_connect("ws://supervisor/core/websocket", timeout=8) as ws:
+                        if (await ws.receive_json()).get("type") != "auth_required":
+                            raise HomeAssistantError("unexpected Home Assistant WebSocket greeting")
+                        await ws.send_json({"type": "auth", "access_token": self.token})
+                        if (await ws.receive_json()).get("type") != "auth_ok":
+                            raise HomeAssistantError("Supervisor token was not accepted")
+                        for ident, event_type in enumerate(("state_changed", "entity_registry_updated", "device_registry_updated"), 1):
+                            await ws.send_json({"id": ident, "type": "subscribe_events", "event_type": event_type})
+                            response = await ws.receive_json()
+                            if not response.get("success"):
+                                raise HomeAssistantError(f"cannot subscribe to {event_type}")
+                        self.ws_connected = True
+                        self.last_health_check_at = datetime.now(UTC)
+                        backoff = 1.0
+                        while not self._stop_event.is_set():
+                            try:
+                                message = await ws.receive_json(timeout=15)
+                            except asyncio.TimeoutError:
+                                await ws.ping()
+                                self.last_health_check_at = datetime.now(UTC)
+                                continue
+                            if message.get("type") != "event":
+                                continue
+                            event = message.get("event", {})
+                            event_type = event.get("event_type")
+                            if event_type in {"entity_registry_updated", "device_registry_updated"}:
+                                self.entities = {}
+                                self._state_cache = None
+                                continue
+                            data = event.get("data", {})
+                            entity_id = data.get("entity_id")
+                            if not isinstance(entity_id, str):
+                                continue
+                            key = next((name for name, value in self.entities.items() if value == entity_id), None)
+                            if key is not None:
+                                new_state = data.get("new_state")
+                                if isinstance(new_state, dict):
+                                    if self._state_cache is None:
+                                        self._state_cache = {}
+                                    self._state_cache[key] = new_state
+                                elif self._state_cache:
+                                    self._state_cache.pop(key, None)
+                            self.last_health_check_at = datetime.now(UTC)
+            except (aiohttp.ClientError, HomeAssistantError, asyncio.TimeoutError):
+                self.ws_connected = False
+                if not self._stop_event.is_set():
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 30)
+            finally:
+                self.ws_connected = False
 
     def capabilities(self, states: dict[str, dict[str, Any]] | None = None) -> dict[str, bool]:
         keys = set(states or self.entities)
@@ -305,15 +400,17 @@ class AnycubicHomeAssistantAdapter:
                 except ValueError:
                     pass
         observed_at = max(dates) if dates else now
+        received_at = self.last_health_check_at or now
         availability = {key: _availability(states.get(key)) for key in set(self.entities) | set(ESSENTIAL_KEYS)}
         essential = all(availability.get(key) == "available" for key in ESSENTIAL_KEYS)
         status = _state(states.get("current_status")) or _state(states.get("job_state"))
         return PrinterSnapshot(
             integration_version=self.integration_version, printer_device_id=self.printer_device_id, observed_at=observed_at,
-            snapshot_received_at=now, last_health_check_at=now,
+            snapshot_received_at=received_at, last_health_check_at=self.last_health_check_at,
             # A successful HA snapshot is fresh even if the printer has been idle
             # and none of its entity values changed recently.
-            stale=False, ha_connected=True, essential_entities_available=essential,
+            stale=(now - received_at).total_seconds() > self.stale_after_seconds,
+            ha_connected=self.ws_connected or self.last_health_check_at is not None, essential_entities_available=essential,
             entity_availability=availability,
             online=_bool(_state(states.get("printer_online"))), available=_bool(_state(states.get("is_available"))),
             busy=_bool(_state(states.get("is_busy"))), status=None if _unknown(status) else str(status),
@@ -364,7 +461,7 @@ class AnycubicHomeAssistantAdapter:
         await self.resolve()
         snapshot = await self.snapshot()
         return {
-            "domain": DOMAIN, "version": self.integration_version, "printer_device_id": self.printer_device_id,
+            "domain": DOMAIN, "version": self.integration_version, "version_detection": self.version_detection, "printer_device_id": self.printer_device_id,
             "ace_device_ids": self.ace_device_ids, "entities_resolved": self.entities,
             "entities_missing": [key for key in ESSENTIAL_KEYS if key not in self.entities],
             "freshness": {"observed_at": snapshot.observed_at, "stale": snapshot.stale}, "capabilities": snapshot.capabilities,

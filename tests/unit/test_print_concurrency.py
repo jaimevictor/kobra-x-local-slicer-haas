@@ -41,7 +41,7 @@ async def test_concurrent_calls_for_one_job_publish_once(monkeypatch, tmp_path):
         record = service.job(job_id)
         record.state = JobState.PREFLIGHT
         service.store.save(record)
-        return record, {"data": {"urls": {"fileUploadurl": "http://127.0.0.1:18910/gcode_upload?s=x"}}}, None, AceSlot(human_slot=1, protocol_slot_index=0, material_type="PLA")
+        return record, {"data": {"urls": {"fileUploadurl": "http://127.0.0.1:18910/gcode_upload?s=x"}}}, None, AceSlot(human_slot=1, protocol_slot_index=0, material_type="PLA"), "printer"
 
     async def start_once(payload):
         nonlocal calls
@@ -49,7 +49,7 @@ async def test_concurrent_calls_for_one_job_publish_once(monkeypatch, tmp_path):
         await asyncio.sleep(0.02)
         return PrintStartResult(sent=True, ack_received=False, accepted=False, unknown=True)
 
-    service.lan = SimpleNamespace(broker=SimpleNamespace(device_id="printer"), publish_print_start_once=start_once)
+    service.lan = SimpleNamespace(publish_print_start_once=start_once)
     monkeypatch.setattr(service, "preflight", preflight)
     with patch("app.core.service.DirectLanFileTransfer", _Upload):
         results = await asyncio.gather(service.print("one"), service.print("one"), return_exceptions=True)
@@ -71,7 +71,7 @@ async def test_two_jobs_do_not_overlap_start_transactions(monkeypatch, tmp_path)
         record = service.job(job_id)
         record.state = JobState.PREFLIGHT
         service.store.save(record)
-        return record, {"data": {"urls": {"fileUploadurl": "http://127.0.0.1:18910/gcode_upload?s=x"}}}, None, AceSlot(human_slot=1, protocol_slot_index=0, material_type="PLA")
+        return record, {"data": {"urls": {"fileUploadurl": "http://127.0.0.1:18910/gcode_upload?s=x"}}}, None, AceSlot(human_slot=1, protocol_slot_index=0, material_type="PLA"), "printer"
 
     async def start_once(payload):
         nonlocal active, maximum, calls
@@ -82,7 +82,7 @@ async def test_two_jobs_do_not_overlap_start_transactions(monkeypatch, tmp_path)
         active -= 1
         return PrintStartResult(sent=True, ack_received=False, accepted=False, unknown=True)
 
-    service.lan = SimpleNamespace(broker=SimpleNamespace(device_id="printer"), publish_print_start_once=start_once)
+    service.lan = SimpleNamespace(publish_print_start_once=start_once)
     monkeypatch.setattr(service, "preflight", preflight)
     with patch("app.core.service.DirectLanFileTransfer", _Upload):
         await asyncio.gather(service.print("one"), service.print("two"))

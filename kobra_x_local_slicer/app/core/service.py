@@ -61,10 +61,41 @@ class AppService:
         self._job_locks: dict[str, asyncio.Lock] = {}
         self._printer_lock = asyncio.Lock()
         self._slicer_semaphore = asyncio.Semaphore(settings.max_concurrent_slicers)
+        self._monitor_task: asyncio.Task[None] | None = None
+        self._monitor_stop = asyncio.Event()
 
     async def close(self) -> None:
+        self._monitor_stop.set()
+        if self._monitor_task:
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
         if self.lan:
             await self.lan.close()
+        if self._ha:
+            await self._ha.close()
+
+    async def start(self) -> None:
+        """Start HA lifecycle and a job monitor; no direct printer polling is used."""
+        adapter = self._ha_adapter()
+        await adapter.start()
+        if self._monitor_task is None or self._monitor_task.done():
+            self._monitor_stop.clear()
+            self._monitor_task = asyncio.create_task(self._monitor_jobs())
+
+    async def _monitor_jobs(self) -> None:
+        while not self._monitor_stop.is_set():
+            try:
+                await self.reconcile_active_jobs()
+            except Exception:
+                # Health/reconnect state is exposed by the adapter; never start/retry here.
+                pass
+            try:
+                await asyncio.wait_for(self._monitor_stop.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                pass
 
     def _ha_adapter(self) -> AnycubicHomeAssistantAdapter:
         if not self.settings.ha_device_id:
@@ -78,13 +109,17 @@ class AppService:
 
     async def printer_snapshot(self):
         try:
-            return await self._ha_adapter().snapshot()
+            adapter = self._ha_adapter()
+            await adapter.start()
+            return await adapter.snapshot()
         except HomeAssistantError as exc:
             raise ServiceError(f"Home Assistant anycubic_cloud state unavailable: {exc}") from exc
 
     async def integration_diagnostics(self) -> dict[str, Any]:
         try:
-            return await self._ha_adapter().diagnostics()
+            adapter = self._ha_adapter()
+            await adapter.start()
+            return await adapter.diagnostics()
         except HomeAssistantError as exc:
             raise ServiceError(f"Home Assistant anycubic_cloud integration unavailable: {exc}") from exc
 
@@ -343,7 +378,7 @@ class AppService:
         record.table_clear_confirmed = True
         return self._save(record)
 
-    async def preflight(self, job_id: str) -> tuple[JobRecord, dict[str, Any], Any, Any]:
+    async def preflight(self, job_id: str) -> tuple[JobRecord, dict[str, Any], Any, Any, str]:
         record = self.job(job_id)
         if record.state != JobState.AWAITING_CONFIRMATION:
             raise ServiceError("job is not ready for print preflight")
@@ -359,7 +394,7 @@ class AppService:
         try:
             # This LAN info request is a narrow bootstrap for the printer-supplied upload URL.
             # It is not used for printer telemetry, ACE, polling, or reconciliation.
-            info = await self.lan.query_info()
+            info, upload_device_id = await self.lan.upload_bootstrap()
             ha = await self.printer_snapshot()
             if ha.stale or not ha.essential_entities_available:
                 raise ServiceError("Home Assistant printer state is stale or incomplete")
@@ -401,7 +436,7 @@ class AppService:
                 raise ServiceError("ACE color changed; preview/mapping updated and human confirmation is required again")
             record.ace_snapshot = fresh_ace
             record.selected_slot = slot
-            return record, info, ha, slot
+            return record, info, ha, slot, upload_device_id
         except Exception:
             if record.state == JobState.PREFLIGHT:
                 self._transition(record, JobState.AWAITING_CONFIRMATION)
@@ -421,8 +456,8 @@ class AppService:
             return await self.preflight(job_id)
         if existing.start_publish_state != StartPublishState.NOT_ATTEMPTED or existing.start_attempt_id:
             raise ServiceError("print/start was already intended for this job; it will only be reconciled")
-        record, info, _ha, slot = await self.preflight(job_id)
-        assert self.lan and self.lan.broker and record.approved_gcode_sha256
+        record, info, _ha, slot, upload_device_id = await self.preflight(job_id)
+        assert self.lan and record.approved_gcode_sha256
         directory = self.store.job_dir(job_id)
         gcode = directory / "output.gcode"
         remote_filename = sanitize_filename(f"kx_{job_id[:8]}_{Path(record.original_filename).stem}.gcode")
@@ -430,7 +465,7 @@ class AppService:
         self._transition(record, JobState.UPLOADING_TO_PRINTER)
         uploader = DirectLanFileTransfer(
             self.settings.printer_host,
-            device_id=self.lan.broker.device_id,
+            device_id=upload_device_id,
             client_version="2.0.0",
         )
         try:
@@ -485,20 +520,54 @@ class AppService:
             return
         observed_name = Path(snapshot.job.name).name if snapshot.job.name else None
         expected_name = Path(record.remote_filename).name if record.remote_filename else None
-        active = snapshot.busy is True or snapshot.job.state in ACTIVE_STATES
+        active = snapshot.busy is True or snapshot.job.in_progress is True or snapshot.job.state in ACTIVE_STATES
         if active and observed_name == expected_name:
             if record.state == JobState.START_UNKNOWN:
                 self._transition(record, JobState.PRINT_ACCEPTED)
             if record.state == JobState.PRINT_ACCEPTED:
                 self._transition(record, JobState.MONITORING)
+        await self._apply_observed_job_state(record, snapshot)
+
+    async def _apply_observed_job_state(self, record: JobRecord, snapshot: Any) -> None:
+        """Persist actual HA job transitions after a correlated start."""
+        if snapshot.job.failed is True and record.state in {JobState.PRINT_ACCEPTED, JobState.MONITORING, JobState.PRINTING, JobState.PAUSED}:
+            self._transition(record, JobState.FAILED)
+        elif snapshot.job.complete is True and record.state in {JobState.PRINT_ACCEPTED, JobState.MONITORING, JobState.PRINTING, JobState.PAUSED}:
+            self._transition(record, JobState.COMPLETED)
+        elif snapshot.job.paused is True and record.state in {JobState.PRINT_ACCEPTED, JobState.MONITORING, JobState.PRINTING}:
+            self._transition(record, JobState.PAUSED)
+        elif (snapshot.job.in_progress is True or snapshot.busy is True) and record.state in {JobState.PRINT_ACCEPTED, JobState.MONITORING}:
+            self._transition(record, JobState.PRINTING)
 
     async def reconcile_active_jobs(self) -> list[JobRecord]:
         """Recovery path after an add-on restart; it never emits a start command."""
-        active = {JobState.START_UNKNOWN, JobState.PRINT_ACCEPTED, JobState.MONITORING}
-        records = [record for record in self.store.list() if record.state in active]
+        records = self.store.list()
         for record in records:
+            if record.state == JobState.SLICING:
+                record.state = JobState.FAILED_RECOVERABLE
+                record.error = "slicing interrupted by restart; verify artifacts and slice again"
+                self._save(record)
+                continue
+            if record.state == JobState.PREFLIGHT:
+                self._transition(record, JobState.AWAITING_CONFIRMATION)
+                continue
+            if record.state == JobState.UPLOADING_TO_PRINTER:
+                self._transition(record, JobState.FAILED_RECOVERABLE)
+                record.error = "upload interrupted by restart; no start was attempted"
+                self._save(record)
+                continue
+            if record.state == JobState.UPLOADED_TO_PRINTER:
+                self._transition(record, JobState.AWAITING_CONFIRMATION)
+                continue
+            if record.state == JobState.STARTING:
+                self._transition(record, JobState.START_UNKNOWN)
             if record.state in {JobState.START_UNKNOWN, JobState.PRINT_ACCEPTED}:
                 await self._reconcile_started(record)
+            elif record.state in {JobState.MONITORING, JobState.PRINTING, JobState.PAUSED}:
+                try:
+                    await self._apply_observed_job_state(record, await self.printer_snapshot())
+                except ServiceError:
+                    pass
         return [self.job(record.id) for record in records]
 
     async def control(self, job_id: str, action: str) -> JobRecord:
