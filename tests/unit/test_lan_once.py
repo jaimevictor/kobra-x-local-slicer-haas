@@ -20,8 +20,11 @@ def test_print_start_timeout_publishes_at_most_once():
  assert result.unknown and result.sent and FakeClient.publishes==1
 
 @pytest.mark.asyncio
-async def test_physical_start_requires_two_explicit_flags(monkeypatch,tmp_path):
+async def test_physical_start_uses_preflight_without_environment_gate(monkeypatch,tmp_path):
  monkeypatch.delenv('KOBRA_HARDWARE_TEST',raising=False)
  monkeypatch.delenv('KOBRA_ALLOW_PHYSICAL_PRINT',raising=False)
- with pytest.raises(ServiceError,match='physical print/start is disabled'):
-  await AppService(Settings(data_dir=tmp_path)).print('unused')
+ service=AppService(Settings(data_dir=tmp_path))
+ async def preflight(_job_id): raise ServiceError('preflight reached')
+ monkeypatch.setattr(service,'preflight',preflight)
+ with pytest.raises(ServiceError,match='preflight reached'):
+  await service.print('unused')

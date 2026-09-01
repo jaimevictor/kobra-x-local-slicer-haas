@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 from dataclasses import asdict
 import json
-import os
 import time
 import uuid
 from datetime import UTC, datetime
@@ -404,8 +403,6 @@ class AppService:
             raise
 
     async def print(self, job_id: str) -> JobRecord:
-        if os.getenv("KOBRA_HARDWARE_TEST") != "1" or os.getenv("KOBRA_ALLOW_PHYSICAL_PRINT") != "1":
-            raise ServiceError("physical print/start is disabled; set KOBRA_HARDWARE_TEST=1 and KOBRA_ALLOW_PHYSICAL_PRINT=1 for a controlled hardware test")
         record, info, _ha, slot = await self.preflight(job_id)
         assert self.lan and self.lan.broker and record.approved_gcode_sha256
         directory = self.store.job_dir(job_id)
@@ -416,7 +413,7 @@ class AppService:
         uploader = KobraUploadClient(
             self.settings.printer_host,
             device_id=self.lan.broker.device_id,
-            client_version="0.1.11",
+            client_version="0.1.12",
         )
         try:
             await uploader.upload(upload_url, gcode, remote_filename)
