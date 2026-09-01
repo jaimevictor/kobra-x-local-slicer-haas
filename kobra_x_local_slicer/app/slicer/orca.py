@@ -30,10 +30,13 @@ class OrcaRunner:
   if orientation==Orientation.ROTATE_Z_90: cmd.extend(['--rotate','90'])
   try:
    proc=await asyncio.wait_for(asyncio.create_subprocess_exec(*cmd,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE),10)
-   _,err=await asyncio.wait_for(proc.communicate(),self.timeout_seconds)
+   stdout,stderr=await asyncio.wait_for(proc.communicate(),self.timeout_seconds)
   except FileNotFoundError as exc: raise OrcaError('OrcaSlicer executable unavailable') from exc
   generated=list(directory.glob('*.gcode'))
-  if proc.returncode or len(generated)!=1: raise OrcaError(f'Orca slicing failed or produced {len(generated)} G-code files: {err.decode(errors="replace")[-500:]}')
+  if proc.returncode or len(generated)!=1:
+   output=(stdout+b'\n'+stderr).decode(errors='replace').strip()[-2000:]
+   files=', '.join(sorted(path.name for path in directory.iterdir()))
+   raise OrcaError(f'Orca slicing failed: exit={proc.returncode}, gcode_files={len(generated)}, supports={supports_enabled}, files=[{files}], output={output or "(no output)"}')
   if generated[0]!=out: generated[0].replace(out)
   if out.stat().st_size>self.gcode_limit_bytes: raise OrcaError('Orca output exceeds G-code limit')
   return out
