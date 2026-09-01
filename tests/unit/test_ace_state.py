@@ -14,3 +14,6 @@ def test_default_pla_prefers_loaded_slot_then_first_pla():
  assert select_default_pla(snapshot).human_slot==2
  first=parse_ace_payload({'data':{'slots':[{'materialType':'PLA'},{'materialType':'PLA'}]}})
  assert select_default_pla(first).human_slot==1
+def test_kobra_x_lan_nested_ace_slots_are_parsed():
+ snapshot=parse_ace_payload({'data':{'multi_color_box':[{'slots':[{'index':0,'type':'PLA','color':[1,2,3]},{'index':1,'type':'PETG'}]}]}})
+ assert [(slot.human_slot,slot.protocol_slot_index,slot.material_type,slot.rgb) for slot in snapshot.normalized]==[(1,0,'PLA',(1,2,3)),(2,1,'PETG',None)]

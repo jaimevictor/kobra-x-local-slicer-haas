@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import stat
+import math
+import struct
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -274,6 +276,182 @@ def sanitize_3mf_for_slicing(src: Path, dst: Path, *, max_decompressed: int) -> 
     except zipfile.BadZipFile as exc:
         raise ThreeMFError("invalid 3MF ZIP container") from exc
     return sorted(removed)
+
+
+_IDENTITY_TRANSFORM = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
+
+
+def _attr(element, name: str) -> str | None:
+    """Read a normal or namespaced XML attribute by its local name."""
+    for key, value in element.attrib.items():
+        if _local(key) == name:
+            return value
+    return None
+
+
+def _parse_transform(value: str | None) -> tuple[float, ...]:
+    if value is None:
+        return _IDENTITY_TRANSFORM
+    try:
+        transform = tuple(float(part) for part in value.split())
+    except ValueError as exc:
+        raise ThreeMFError("invalid 3MF transform") from exc
+    if len(transform) != 12 or not all(math.isfinite(number) for number in transform):
+        raise ThreeMFError("invalid 3MF transform")
+    return transform
+
+
+def _compose_transform(first: tuple[float, ...], second: tuple[float, ...]) -> tuple[float, ...]:
+    """Return the 3MF transform which applies ``first`` and then ``second``.
+
+    3MF uses a row-vector 3x4 affine matrix: x' = x*m00 + y*m10 + z*m20 + m30.
+    """
+    linear = tuple(
+        sum(first[row * 3 + index] * second[index * 3 + column] for index in range(3))
+        for row in range(3)
+        for column in range(3)
+    )
+    translation = tuple(
+        sum(first[9 + index] * second[index * 3 + column] for index in range(3)) + second[9 + column]
+        for column in range(3)
+    )
+    return linear + translation
+
+
+def _apply_transform(point: tuple[float, float, float], transform: tuple[float, ...]) -> tuple[float, float, float]:
+    x, y, z = point
+    result = (
+        x * transform[0] + y * transform[3] + z * transform[6] + transform[9],
+        x * transform[1] + y * transform[4] + z * transform[7] + transform[10],
+        x * transform[2] + y * transform[5] + z * transform[8] + transform[11],
+    )
+    if not all(math.isfinite(number) for number in result):
+        raise ThreeMFError("3MF mesh contains non-finite coordinates")
+    return result
+
+
+def _normal(a: tuple[float, float, float], b: tuple[float, float, float], c: tuple[float, float, float]) -> tuple[float, float, float]:
+    ux, uy, uz = (b[i] - a[i] for i in range(3))
+    vx, vy, vz = (c[i] - a[i] for i in range(3))
+    nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+    length = math.sqrt(nx * nx + ny * ny + nz * nz)
+    return (0.0, 0.0, 0.0) if length == 0 else (nx / length, ny / length, nz / length)
+
+
+def three_mf_to_stl(src: Path, dst: Path, *, max_decompressed: int) -> int:
+    """Flatten a validated standard 3MF package into a geometry-only binary STL.
+
+    Some old BambuStudio projects make OrcaSlicer 2.4.2 segfault even after their
+    project metadata is stripped. A neutral STL avoids the fragile project loader,
+    while keeping the printable build transforms from the selected 3MF plate.
+    """
+    try:
+        with zipfile.ZipFile(src, "r") as zf:
+            infos = _safe_members(zf, max_decompressed)
+            names = {info.filename for info in infos}
+            if MODEL_FILE not in names:
+                raise ThreeMFError(f"unsupported 3MF: {MODEL_FILE} missing")
+            models: dict[str, tuple[dict[str, object], list[ET.Element]]] = {}
+
+            def model(name: str) -> tuple[dict[str, object], list[ET.Element]]:
+                if name in models:
+                    return models[name]
+                if name not in names:
+                    raise ThreeMFError(f"3MF component model missing: {name}")
+                try:
+                    root = DET.fromstring(_read_limited(zf, name, 64 * 1024 * 1024))
+                except Exception as exc:
+                    raise ThreeMFError(f"invalid 3MF component model: {name}") from exc
+                resources = next((element for element in root if _local(element.tag) == "resources"), None)
+                objects: dict[str, object] = {}
+                if resources is not None:
+                    for element in resources:
+                        if _local(element.tag) == "object" and (object_id := _attr(element, "id")):
+                            objects[object_id] = element
+                build = next((element for element in root if _local(element.tag) == "build"), None)
+                items = [element for element in build or () if _local(element.tag) == "item"]
+                models[name] = (objects, items)
+                return models[name]
+
+            triangles_written = 0
+            tmp = dst.with_suffix(dst.suffix + ".tmp")
+            with tmp.open("wb+") as out:
+                out.write(b"Kobra X Local Slicer 3MF geometry fallback".ljust(80, b"\0"))
+                out.write(struct.pack("<I", 0))
+
+                def emit_object(model_name: str, object_id: str, transform: tuple[float, ...], stack: set[tuple[str, str]]) -> None:
+                    nonlocal triangles_written
+                    key = (model_name, object_id)
+                    if key in stack or len(stack) >= 32:
+                        raise ThreeMFError("3MF component graph is recursive or too deep")
+                    objects, _ = model(model_name)
+                    element = objects.get(object_id)
+                    if not isinstance(element, ET.Element):
+                        raise ThreeMFError(f"3MF object missing: {object_id}")
+                    next_stack = stack | {key}
+                    mesh = next((child for child in element if _local(child.tag) == "mesh"), None)
+                    if mesh is not None:
+                        vertices_node = next((child for child in mesh if _local(child.tag) == "vertices"), None)
+                        triangles_node = next((child for child in mesh if _local(child.tag) == "triangles"), None)
+                        if vertices_node is None or triangles_node is None:
+                            raise ThreeMFError("3MF mesh is missing vertices or triangles")
+                        vertices: list[tuple[float, float, float]] = []
+                        for vertex in vertices_node:
+                            if _local(vertex.tag) != "vertex":
+                                continue
+                            try:
+                                point = tuple(float(_attr(vertex, axis) or "") for axis in ("x", "y", "z"))
+                            except ValueError as exc:
+                                raise ThreeMFError("invalid 3MF vertex") from exc
+                            if not all(math.isfinite(number) for number in point):
+                                raise ThreeMFError("3MF mesh contains non-finite coordinates")
+                            vertices.append(_apply_transform(point, transform))
+                        for triangle in triangles_node:
+                            if _local(triangle.tag) != "triangle":
+                                continue
+                            try:
+                                indexes = tuple(int(_attr(triangle, name) or "") for name in ("v1", "v2", "v3"))
+                                a, b, c = (vertices[index] for index in indexes)
+                            except (ValueError, IndexError) as exc:
+                                raise ThreeMFError("invalid 3MF triangle index") from exc
+                            triangles_written += 1
+                            if triangles_written > 2_000_000:
+                                raise ThreeMFError("3MF triangle limit exceeded")
+                            out.write(struct.pack("<12fH", *_normal(a, b, c), *a, *b, *c, 0))
+                        return
+                    components = next((child for child in element if _local(child.tag) == "components"), None)
+                    if components is None:
+                        raise ThreeMFError("3MF object has neither mesh nor components")
+                    for component in components:
+                        if _local(component.tag) != "component":
+                            continue
+                        component_id = _attr(component, "objectid")
+                        if not component_id:
+                            raise ThreeMFError("3MF component missing objectid")
+                        path = _attr(component, "path")
+                        child_model = _normalise_package_path(PurePosixPath(model_name).parent, path) if path else model_name
+                        if child_model not in names:
+                            raise ThreeMFError(f"3MF component model missing: {child_model}")
+                        emit_object(child_model, component_id, _compose_transform(_parse_transform(_attr(component, "transform")), transform), next_stack)
+
+                root_objects, root_build = model(MODEL_FILE)
+                if not root_build:
+                    raise ThreeMFError("3MF contains no printable build items")
+                for item in root_build:
+                    object_id = _attr(item, "objectid")
+                    if not object_id or object_id not in root_objects:
+                        raise ThreeMFError("3MF build item references an unknown object")
+                    if (_attr(item, "printable") or "1") == "0":
+                        continue
+                    emit_object(MODEL_FILE, object_id, _parse_transform(_attr(item, "transform")), set())
+                if triangles_written == 0:
+                    raise ThreeMFError("3MF contains no printable triangles")
+                out.seek(80)
+                out.write(struct.pack("<I", triangles_written))
+            tmp.replace(dst)
+            return triangles_written
+    except zipfile.BadZipFile as exc:
+        raise ThreeMFError("invalid 3MF ZIP container") from exc
 
 def inspect_3mf(path: Path, *, max_decompressed: int) -> ThreeMFInspection:
     try:

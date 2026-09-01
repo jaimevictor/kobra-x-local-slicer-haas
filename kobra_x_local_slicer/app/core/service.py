@@ -24,7 +24,7 @@ from app.kobra.upload import KobraUploadClient, extract_upload_url
 from app.slicer.gcode import inspect_gcode, write_preview
 from app.slicer.geometry import inspect_stl
 from app.slicer.orca import OrcaRunner
-from app.slicer.three_mf import inspect_3mf, sanitize_3mf_for_slicing
+from app.slicer.three_mf import inspect_3mf, sanitize_3mf_for_slicing, three_mf_to_stl
 
 
 class ServiceError(RuntimeError):
@@ -96,10 +96,19 @@ class AppService:
     def _slicing_input(self, record: JobRecord) -> Path:
         directory = self.store.job_dir(record.id)
         if record.input_type == "3mf":
-            sanitized = directory / "input_sanitized.3mf"
-            if not sanitized.is_file():
+            geometry = directory / "input_geometry.stl"
+            if not geometry.is_file():
+                sanitized = directory / "input_sanitized.3mf"
+                if not sanitized.is_file():
+                    raise ServiceError("sanitized 3MF missing; upload/inspection must be repeated")
+                three_mf_to_stl(
+                    sanitized,
+                    geometry,
+                    max_decompressed=self.settings.decompressed_3mf_limit_bytes,
+                )
+            if not geometry.is_file():
                 raise ServiceError("sanitized 3MF missing; upload/inspection must be repeated")
-            return sanitized
+            return geometry
         return directory / record.input_filename
 
     async def create_job(self, upload: UploadFile) -> JobRecord:
@@ -141,8 +150,14 @@ class AppService:
                     path, directory / "input_sanitized.3mf",
                     max_decompressed=self.settings.decompressed_3mf_limit_bytes,
                 )
+                triangles = three_mf_to_stl(
+                    directory / "input_sanitized.3mf",
+                    directory / "input_geometry.stl",
+                    max_decompressed=self.settings.decompressed_3mf_limit_bytes,
+                )
                 payload = asdict(inspection)
                 payload["removed_slicing_metadata"] = removed
+                payload["geometry_fallback_triangles"] = triangles
                 (directory / "input_inspection.json").write_text(
                     json.dumps(payload, indent=2), encoding="utf-8"
                 )
@@ -401,7 +416,7 @@ class AppService:
         uploader = KobraUploadClient(
             self.settings.printer_host,
             device_id=self.lan.broker.device_id,
-            client_version="0.1.8",
+            client_version="0.1.10",
         )
         try:
             await uploader.upload(upload_url, gcode, remote_filename)

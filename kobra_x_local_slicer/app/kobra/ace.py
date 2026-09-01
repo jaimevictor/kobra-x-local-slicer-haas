@@ -3,10 +3,20 @@ from typing import Any
 from app.core.models import AceSlot, AceSnapshot
 class AceParseError(ValueError): pass
 def _items(payload:dict[str,Any])->list[dict[str,Any]]:
- data=payload.get('data',payload); candidates=[]
- if isinstance(data,dict): candidates=[data.get(k) for k in ('slots','boxInfo','materials','multiColorBox')]
- for item in candidates:
+ data=payload.get('data',payload)
+ if not isinstance(data,dict): return []
+ for key in ('slots','boxInfo','materials'):
+  item=data.get(key)
   if isinstance(item,list): return [x for x in item if isinstance(x,dict)]
+ # Kobra X LAN reports a list of ACE boxes; its actual material entries are
+ # nested under each box's ``slots`` key (not in the top-level list itself).
+ for key in ('multi_color_box','multiColorBox'):
+  boxes=data.get(key)
+  if isinstance(boxes,list):
+   slots=[]
+   for box in boxes:
+    if isinstance(box,dict) and isinstance(box.get('slots'),list): slots.extend(x for x in box['slots'] if isinstance(x,dict))
+   if slots: return slots
  return []
 def parse_ace_payload(payload:dict[str,Any])->AceSnapshot:
  if not isinstance(payload,dict): raise AceParseError('ACE payload is not an object')
