@@ -98,13 +98,21 @@ friendly names or entity-id suffixes. HA state is the hardware source of truth. 
 LAN classes are retained only for the currently validated upload/start transport and do not expose
 ACE parsing, telemetry polling, pause/resume/cancel or reconciliation.
 
+The adapter holds one persistent Home Assistant WebSocket subscription for state and registry
+events. It reconnects with bounded backoff and invalidates the entity/state cache on registry
+updates, so the next snapshot re-resolves renamed entities. A successful `get_states` response (or
+the restricted REST fallback when WebSocket is down) stamps `snapshot_received_at`; state freshness
+therefore proves a current HA response rather than assuming an idle entity is stale because its
+value did not change. `last_error*` remains historical information; only an affirmative
+`job_failed` contributes to `fault.active`.
+
 | `translation_key` | `PrinterSnapshot` field |
 |---|---|
 | `printer_online`, `is_available`, `is_busy`, `current_status` | `online`, `available`, `busy`, `status` |
 | `job_name`, `job_state`, `job_progress`, `job_is_paused` | `job.name`, `job.state`, `job.progress`, `job.paused` |
 | `job_current_layer`, `job_total_layers`, `job_time_elapsed`, `job_time_remaining`, `job_eta` | corresponding `job.*` field |
 | `curr_nozzle_temp`, `target_nozzle_temp`, `curr_hotbed_temp`, `target_hotbed_temp` | corresponding `thermal.*` field |
-| `last_error_code`, `last_error` | `fault.code`, `fault.message` |
+| `job_failed`, `last_error_code`, `last_error` | `fault.active`/`fault.job_failed`, `fault.last_error_code`, `fault.last_error_message` |
 | `ace_loaded_slot`, `ace_slot_1` … `ace_slot_4`, `ace_spools` | `ace.loaded_slot`, `ace.normalized` |
 
 | Command | Actual transport |
@@ -115,6 +123,11 @@ ACE parsing, telemetry polling, pause/resume/cancel or reconciliation.
 
 If ACE material changes from PLA, the slice is invalidated. If only RGB changes, the slice may
 remain technically valid but the mapping/preview are refreshed and human confirmation is cleared.
+
+Start intent is stored atomically before the only direct publish. A restart after that durable
+intent enters `START_UNKNOWN` and reconciles against HA; it never re-publishes. Retention cleanup
+keeps all transient and active states, including `START_UNKNOWN`, `MONITORING`, `PRINTING`, and
+`PAUSED`.
 
 ## Runtime isolation
 
