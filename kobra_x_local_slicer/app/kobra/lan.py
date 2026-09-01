@@ -21,10 +21,11 @@ class KobraLanError(RuntimeError):
     pass
 
 
-class KobraLanSession:
-    """Fresh LAN queries use the public anycubic-cloud-api LAN client.
+class ValidatedLegacyLanStart:
+    """Temporary direct-LAN transport for upload bootstrap and one-shot start.
 
-    Physical print/start uses a separate one-shot MQTT connection with reconnect disabled.
+    It deliberately exposes no ACE/status/print monitor API. Hardware state and
+    controls are supplied exclusively by Home Assistant anycubic_cloud.
     """
 
     def __init__(self, host: str):
@@ -88,15 +89,6 @@ class KobraLanSession:
     async def query_info(self) -> dict[str, Any]:
         return await self.query("info")
 
-    async def query_ace(self) -> dict[str, Any]:
-        return await self.query("multiColorBox")
-
-    async def query_print(self, *, timeout: float = 4.0) -> dict[str, Any] | None:
-        try:
-            return await self.query("print", timeout=timeout)
-        except KobraLanError:
-            return None
-
     async def publish_print_start_once(self, data: dict[str, Any], *, ack_timeout: float = 10.0) -> PrintStartResult:
         await self.connect()
         assert self.broker is not None and self.client is not None
@@ -108,6 +100,10 @@ class KobraLanSession:
             data,
             ack_timeout,
         )
+
+
+# Compatibility alias; new code should use ValidatedLegacyLanStart.
+KobraLanSession = ValidatedLegacyLanStart
 
 
 def _ssl_context() -> ssl.SSLContext:

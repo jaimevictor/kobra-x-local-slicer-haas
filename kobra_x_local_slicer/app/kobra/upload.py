@@ -45,8 +45,12 @@ def validate_upload_response(status: int, body: dict[str, Any], filename: str) -
         raise UploadError("upload response filename mismatch")
 
 
-class KobraUploadClient:
-    def __init__(self, printer_host: str, *, device_id: str, client_version: str = "0.1.12"):
+class DirectLanFileTransfer:
+    """The narrowly-scoped, validated direct HTTP file transfer exception.
+
+    This class has no printer state, ACE, MQTT, polling, or control methods.
+    """
+    def __init__(self, printer_host: str, *, device_id: str, client_version: str = "2.0.0"):
         self.printer_host = printer_host
         self.device_id = device_id
         self.client_version = client_version
@@ -83,3 +87,7 @@ class KobraUploadClient:
                         raise UploadError("upload response is not JSON") from exc
                     validate_upload_response(response.status, body, remote_filename)
                     return body
+
+
+# Existing import path retained for third-party callers during the v2 transition.
+KobraUploadClient = DirectLanFileTransfer

@@ -32,12 +32,65 @@ class AceSlot(BaseModel):
     material_type: str | None = None
     rgb: tuple[int, int, int] | None = None
     loaded: bool | None = None
+    color_hex: str | None = None
+    colors_hex: list[str] = Field(default_factory=list)
+    is_multi_color: bool | None = None
+    sku: str | None = None
+    spool_loaded: bool | None = None
+    status: str | None = None
+    edit_status: str | None = None
+    consumables_percent: float | None = None
+    raw_state: str | None = None
 
 
 class AceSnapshot(BaseModel):
     raw: dict[str, Any]
     parsed: list[dict[str, Any]]
     normalized: list[AceSlot]
+    loaded_slot: int | None = None
+
+
+class PrinterJobSnapshot(BaseModel):
+    name: str | None = None
+    state: str | None = None
+    progress: float | None = None
+    current_layer: int | None = None
+    total_layers: int | None = None
+    elapsed_minutes: float | None = None
+    remaining_minutes: float | None = None
+    eta: str | None = None
+    paused: bool | None = None
+
+
+class PrinterThermalSnapshot(BaseModel):
+    nozzle_current: float | None = None
+    nozzle_target: float | None = None
+    bed_current: float | None = None
+    bed_target: float | None = None
+
+
+class PrinterFaultSnapshot(BaseModel):
+    code: str | None = None
+    message: str | None = None
+
+
+class PrinterSnapshot(BaseModel):
+    source: str = "home_assistant:anycubic_cloud"
+    integration_version: str | None = None
+    printer_device_id: str | None = None
+    observed_at: datetime
+    stale: bool
+    ha_connected: bool
+    essential_entities_available: bool
+    online: bool | None = None
+    available: bool | None = None
+    busy: bool | None = None
+    status: str | None = None
+    job: PrinterJobSnapshot = Field(default_factory=PrinterJobSnapshot)
+    thermal: PrinterThermalSnapshot = Field(default_factory=PrinterThermalSnapshot)
+    ace: AceSnapshot | None = None
+    fault: PrinterFaultSnapshot = Field(default_factory=PrinterFaultSnapshot)
+    capabilities: dict[str, bool] = Field(default_factory=dict)
 
 
 class TemperatureStats(BaseModel):
@@ -58,7 +111,9 @@ class JobRecord(BaseModel):
     supports_enabled: bool = False
     selected_slot: AceSlot | None = None; ace_snapshot: AceSnapshot | None = None; slice_stats: SliceStats | None = None
     approved_gcode_sha256: str | None = None; approved_slot_snapshot: AceSlot | None = None; table_clear_confirmed: bool = False
-    remote_filename: str | None = None; ha_error_baseline: dict[str, str] = Field(default_factory=dict); error: str | None = None
+    remote_filename: str | None = None; error: str | None = None
+    printer_snapshot_at_slice: PrinterSnapshot | None = None
+    action_log: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PrintStartResult(BaseModel):

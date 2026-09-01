@@ -11,6 +11,12 @@ class JobStore:
  def create_dir(self, job_id:str)->Path: p=self.job_dir(job_id); p.mkdir(mode=0o700); return p
  def save(self, record:JobRecord)->None: (self.job_dir(record.id)/'metadata.json').write_text(record.model_dump_json(indent=2),encoding='utf-8')
  def load(self, job_id:str)->JobRecord: return JobRecord.model_validate_json((self.job_dir(job_id)/'metadata.json').read_text(encoding='utf-8'))
+ def list(self)->list[JobRecord]:
+  records=[]
+  for directory in (self.settings.data_dir/'jobs').iterdir():
+   try: records.append(self.load(directory.name))
+   except (FileNotFoundError,ValueError): continue
+  return sorted(records,key=lambda record:record.updated_at,reverse=True)
  def enforce_limits(self, incoming_bytes:int=0)->None:
   jobs=self.settings.data_dir/'jobs'; self.cleanup(); used=sum(p.stat().st_size for p in jobs.rglob('*') if p.is_file())
   if used+incoming_bytes>self.settings.jobs_storage_limit_bytes: raise RuntimeError('job storage quota exceeded')

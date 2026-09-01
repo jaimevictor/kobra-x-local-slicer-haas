@@ -16,10 +16,10 @@ from app.core.models import JobRecord, JobState, Orientation
 from app.core.security import sanitize_filename
 from app.core.state_machine import assert_transition
 from app.core.storage import JobStore
-from app.ha.client import HomeAssistantClient, HomeAssistantError, new_errors
-from app.kobra.ace import parse_ace_payload, pla_slots, select_default_pla
-from app.kobra.lan import KobraLanSession
-from app.kobra.upload import KobraUploadClient, extract_upload_url
+from app.ha.client import AnycubicHomeAssistantAdapter, HomeAssistantError
+from app.kobra.ace import pla_slots, select_default_pla
+from app.kobra.lan import ValidatedLegacyLanStart
+from app.kobra.upload import DirectLanFileTransfer, extract_upload_url
 from app.slicer.gcode import inspect_gcode, write_preview
 from app.slicer.geometry import inspect_stl
 from app.slicer.orca import OrcaRunner
@@ -46,23 +46,6 @@ def _hash_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _lan_state(info: dict[str, Any], print_report: dict[str, Any] | None) -> tuple[str | None, str | None, bool]:
-    data = info.get("data") if isinstance(info.get("data"), dict) else {}
-    state = str(data.get("state") or info.get("state") or "").lower() or None
-    filename = None
-    active = state in ACTIVE_STATES if state else False
-    if isinstance(print_report, dict):
-        p_data = print_report.get("data") if isinstance(print_report.get("data"), dict) else {}
-        p_state = str(print_report.get("state") or p_data.get("state") or "").lower()
-        if p_state:
-            state = p_state
-            active = p_state in ACTIVE_STATES
-        f = p_data.get("filename")
-        if f:
-            filename = str(f)
-    return state, filename, active
-
-
 class AppService:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -72,12 +55,35 @@ class AppService:
             timeout_seconds=settings.slicing_timeout_seconds,
             gcode_limit_bytes=settings.gcode_limit_bytes,
         )
-        self.lan = KobraLanSession(settings.printer_host) if settings.printer_host else None
+        self._ha: AnycubicHomeAssistantAdapter | None = None
+        self.lan = ValidatedLegacyLanStart(settings.printer_host) if settings.printer_host else None
         self._job_locks: dict[str, Any] = {}
 
     async def close(self) -> None:
         if self.lan:
             await self.lan.close()
+
+    def _ha_adapter(self) -> AnycubicHomeAssistantAdapter:
+        if not self.settings.ha_device_id:
+            raise ServiceError("Anycubic Cloud & LAN printer device is not configured")
+        if self._ha is None or self._ha.printer_device_id != self.settings.ha_device_id:
+            try:
+                self._ha = AnycubicHomeAssistantAdapter(self.settings.ha_device_id)
+            except HomeAssistantError as exc:
+                raise ServiceError(f"Home Assistant integration unavailable: {exc}") from exc
+        return self._ha
+
+    async def printer_snapshot(self):
+        try:
+            return await self._ha_adapter().snapshot()
+        except HomeAssistantError as exc:
+            raise ServiceError(f"Home Assistant anycubic_cloud state unavailable: {exc}") from exc
+
+    async def integration_diagnostics(self) -> dict[str, Any]:
+        try:
+            return await self._ha_adapter().diagnostics()
+        except HomeAssistantError as exc:
+            raise ServiceError(f"Home Assistant anycubic_cloud integration unavailable: {exc}") from exc
 
     def _save(self, record: JobRecord) -> JobRecord:
         record.updated_at = _utcnow()
@@ -169,12 +175,12 @@ class AppService:
                     json.dumps({"triangles": mesh.triangles, "volume_mm3": mesh.volume_mm3, "bounds": mesh.bounds.model_dump()}, indent=2),
                     encoding="utf-8",
                 )
-            if self.settings.ha_entity_map:
+            if self.settings.ha_device_id:
                 try:
-                    record.ha_error_baseline = (await HomeAssistantClient().cross_check(self.settings.ha_entity_map)).error_states
+                    record.printer_snapshot_at_slice = await self.printer_snapshot()
                     self._save(record)
                 except Exception:
-                    # Upload/inspection may continue; final preflight requires a successful HA cross-check.
+                    # Inspection can continue; slice/preflight require a fresh adapter snapshot.
                     pass
             self._transition(record, JobState.READY_TO_SLICE)
             return record
@@ -192,23 +198,12 @@ class AppService:
             await upload.close()
 
     async def ace(self, job_id: str | None = None):
-        snapshot = None
-        lan_error: Exception | None = None
-        if self.lan:
-            try:
-                snapshot = parse_ace_payload(await self.lan.query_ace())
-            except Exception as exc:
-                lan_error = exc
-        if not snapshot or not pla_slots(snapshot):
-            try:
-                ha_snapshot = await HomeAssistantClient().ace_snapshot(self.settings.ha_ace_entity_map or {})
-                if ha_snapshot.normalized:
-                    snapshot = ha_snapshot
-            except Exception as exc:
-                if snapshot is None:
-                    lan_error = lan_error or exc
+        printer = await self.printer_snapshot()
+        snapshot = printer.ace
         if snapshot is None:
-            raise ServiceError(f"ACE unavailable: {lan_error or 'printer_host not configured'}")
+            raise ServiceError("ACE is unavailable from Home Assistant anycubic_cloud")
+        if printer.stale:
+            raise ServiceError("Home Assistant ACE state is stale")
         if job_id:
             record = self.job(job_id)
             record.ace_snapshot = snapshot
@@ -271,6 +266,7 @@ class AppService:
             raise ServiceError("job is not ready to slice")
         fresh_ace = await self.ace(job_id)
         record = self.job(job_id)
+        record.printer_snapshot_at_slice = await self.printer_snapshot()
         pla = pla_slots(fresh_ace)
         if not pla:
             raise ServiceError("nenhum slot PLA disponível")
@@ -327,18 +323,6 @@ class AppService:
         record.table_clear_confirmed = True
         return self._save(record)
 
-    async def _ha_cross_check(self, record: JobRecord):
-        if not self.settings.ha_entity_map:
-            raise ServiceError("Home Assistant entity mapping is not configured")
-        try:
-            ha = await HomeAssistantClient().cross_check(self.settings.ha_entity_map)
-        except HomeAssistantError as exc:
-            raise ServiceError(f"Home Assistant cross-check failed: {exc}") from exc
-        changed_errors = new_errors(ha.error_states, record.ha_error_baseline)
-        if changed_errors or ha.current_fault is True:
-            raise ServiceError(f"new/current Home Assistant error state: {changed_errors or 'fault active'}")
-        return ha
-
     async def preflight(self, job_id: str) -> tuple[JobRecord, dict[str, Any], Any, Any]:
         record = self.job(job_id)
         if record.state != JobState.AWAITING_CONFIRMATION:
@@ -353,28 +337,21 @@ class AppService:
             raise ServiceError("printer_host not configured")
         self._transition(record, JobState.PREFLIGHT)
         try:
+            # This LAN info request is a narrow bootstrap for the printer-supplied upload URL.
+            # It is not used for printer telemetry, ACE, polling, or reconciliation.
             info = await self.lan.query_info()
-            print_report = await self.lan.query_print()
-            state, current_filename, lan_active = _lan_state(info, print_report)
-            if state is None or state not in FREE_STATES or lan_active:
-                raise ServiceError(f"printer LAN state is not free/available: {state}")
-            ha = await self._ha_cross_check(record)
-            required_ha = {
-                "online": ha.online,
-                "available": ha.available,
-                "busy": ha.busy,
-                "job_in_progress": ha.job_in_progress,
-                "state": ha.state,
-            }
-            missing = [key for key, value in required_ha.items() if value is None]
-            if missing:
-                raise ServiceError(f"Home Assistant cross-check is incomplete for: {', '.join(missing)}")
-            if ha.online is not True or ha.available is not True or ha.busy is not False or ha.job_in_progress is not False:
+            ha = await self.printer_snapshot()
+            if ha.stale or not ha.essential_entities_available:
+                raise ServiceError("Home Assistant printer state is stale or incomplete")
+            if ha.online is not True or ha.available is not True or ha.busy is not False or ha.job.paused is True:
                 raise ServiceError(f"Home Assistant reports printer unavailable/busy: {ha.model_dump()}")
-            if str(ha.state).lower() not in FREE_STATES:
-                raise ServiceError(f"Home Assistant printer state disagrees with LAN: {ha.state} vs {state}")
-
-            fresh_ace = parse_ace_payload(await self.lan.query_ace())
+            if ha.status is None or ha.status.lower() not in FREE_STATES:
+                raise ServiceError(f"Home Assistant printer state is not free/available: {ha.status}")
+            if ha.fault.code or ha.fault.message:
+                raise ServiceError(f"Home Assistant reports printer fault: {ha.fault.code or ha.fault.message}")
+            fresh_ace = ha.ace
+            if fresh_ace is None:
+                raise ServiceError("ACE unavailable from Home Assistant")
             if record.selected_slot is None or record.approved_slot_snapshot is None:
                 raise ServiceError("selected/approved ACE slot missing")
             slot = next((s for s in fresh_ace.normalized if s.protocol_slot_index == record.selected_slot.protocol_slot_index), None)
@@ -387,6 +364,10 @@ class AppService:
                 self._transition(record, JobState.AWAITING_CONFIRMATION)
                 self._transition(record, JobState.READY_TO_SLICE)
                 raise ServiceError("ACE material changed; slice invalidated and re-slice required")
+            if slot.spool_loaded is False:
+                raise ServiceError("selected ACE slot is empty")
+            if fresh_ace.loaded_slot is not None and fresh_ace.loaded_slot != slot.human_slot:
+                raise ServiceError("selected ACE slot is no longer the loaded slot")
             if slot.rgb != record.approved_slot_snapshot.rgb:
                 record.selected_slot = slot
                 record.approved_gcode_sha256 = None
@@ -410,10 +391,10 @@ class AppService:
         remote_filename = sanitize_filename(f"kx_{job_id[:8]}_{Path(record.original_filename).stem}.gcode")
         upload_url = extract_upload_url(info)
         self._transition(record, JobState.UPLOADING_TO_PRINTER)
-        uploader = KobraUploadClient(
+        uploader = DirectLanFileTransfer(
             self.settings.printer_host,
             device_id=self.lan.broker.device_id,
-            client_version="0.1.12",
+            client_version="2.0.0",
         )
         try:
             await uploader.upload(upload_url, gcode, remote_filename)
@@ -437,19 +418,58 @@ class AppService:
         result = await self.lan.publish_print_start_once(payload)
         if result.accepted:
             self._transition(record, JobState.PRINT_ACCEPTED)
-            self._transition(record, JobState.MONITORING)
+            await self._reconcile_started(record)
             return record
 
         # Critical idempotency rule: never publish print/start a second time.
         record.state = JobState.START_UNKNOWN
         record.error = "print/start delivery/ACK uncertain; command will not be retried"
         self._save(record)
-        report = await self.lan.query_print(timeout=5.0)
-        if report:
-            p_data = report.get("data") if isinstance(report.get("data"), dict) else {}
-            p_state = str(report.get("state") or p_data.get("state") or "").lower()
-            p_filename = str(p_data.get("filename") or "")
-            if p_state in ACTIVE_STATES and p_filename == remote_filename:
-                self._transition(record, JobState.PRINT_ACCEPTED)
-                self._transition(record, JobState.MONITORING)
+        await self._reconcile_started(record)
         return record
+
+    async def _reconcile_started(self, record: JobRecord) -> None:
+        """Promote a start only with evidence from anycubic_cloud, never by retry."""
+        try:
+            snapshot = await self.printer_snapshot()
+        except ServiceError:
+            return
+        observed_name = Path(snapshot.job.name).name if snapshot.job.name else None
+        expected_name = Path(record.remote_filename).name if record.remote_filename else None
+        active = snapshot.busy is True or snapshot.job.state in ACTIVE_STATES
+        if active and observed_name == expected_name:
+            if record.state == JobState.START_UNKNOWN:
+                self._transition(record, JobState.PRINT_ACCEPTED)
+            if record.state == JobState.PRINT_ACCEPTED:
+                self._transition(record, JobState.MONITORING)
+
+    async def reconcile_active_jobs(self) -> list[JobRecord]:
+        """Recovery path after an add-on restart; it never emits a start command."""
+        active = {JobState.START_UNKNOWN, JobState.PRINT_ACCEPTED, JobState.MONITORING}
+        records = [record for record in self.store.list() if record.state in active]
+        for record in records:
+            if record.state in {JobState.START_UNKNOWN, JobState.PRINT_ACCEPTED}:
+                await self._reconcile_started(record)
+        return [self.job(record.id) for record in records]
+
+    async def control(self, job_id: str, action: str) -> JobRecord:
+        record = self.job(job_id)
+        if record.state not in {JobState.MONITORING, JobState.PRINT_ACCEPTED, JobState.START_UNKNOWN}:
+            raise ServiceError(f"cannot {action} in job state {record.state.value}")
+        snapshot = await self.printer_snapshot()
+        if snapshot.stale:
+            raise ServiceError("cannot control printer while Home Assistant state is stale")
+        try:
+            outcome = await self._ha_adapter().press(action)
+        except HomeAssistantError as exc:
+            raise ServiceError(str(exc)) from exc
+        outcome["requested_at"] = _utcnow().isoformat()
+        try:
+            observed = await self.printer_snapshot()
+            outcome["observed_state"] = observed.status
+            outcome["observed_paused"] = observed.job.paused
+            outcome["confirmed"] = (action == "pause" and observed.job.paused is True) or (action == "resume" and observed.job.paused is False) or (action == "cancel" and observed.busy is False)
+        except ServiceError:
+            outcome["confirmed"] = False
+        record.action_log.append(outcome)
+        return self._save(record)

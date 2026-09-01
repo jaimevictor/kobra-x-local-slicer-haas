@@ -14,10 +14,9 @@ Nginx (allow 172.30.32.2; deny all)
    ▼
 FastAPI :8098
    ├── /data job store + state machine
-   ├── Supervisor/Core REST + WebSocket (SUPERVISOR_TOKEN)
-   ├── anycubic-cloud-api 0.4.26 LAN handshake/query MQTT
-   ├── strict local HTTP upload client
-   ├── one-shot no-retry MQTT print/start client
+   ├── AnycubicHomeAssistantAdapter (public HA registry/state/service APIs)
+   ├── DirectLanFileTransfer (strict local HTTP upload only)
+   ├── ValidatedLegacyLanStart (one-shot, no-retry print/start only)
    └── Xvfb + OrcaSlicer 2.4.2 subprocess
 ```
 
@@ -68,9 +67,51 @@ UPLOADED -> INSPECTING -> READY_TO_SLICE -> SLICING -> SLICED
 There is no `SLICED -> PRINT` transition. The user approval stores the current G-code SHA-256,
 ACE slot snapshot and table-clear checkbox. Changes invalidate the approval.
 
-Final preflight requires fresh LAN state and fresh HA cross-check values. Missing safety-critical
-HA roles fail closed. An unchanged sticky historical error is ignored; a changed/new active error
-or current fault blocks.
+Final preflight requires a fresh, complete `anycubic_cloud` snapshot. Missing, `unknown`,
+`unavailable` and stale essential values fail closed; these values are never converted to false,
+zero or idle. ACE material and slot state are also read only from that snapshot.
+
+## v2 Home Assistant boundary
+
+```text
+anycubic_cloud public registries + state changes + button.press
+                         │
+                         ▼
+             AnycubicHomeAssistantAdapter
+              ├── PrinterSnapshot / ACE / faults
+              ├── capabilities
+              └── pause, resume, cancel
+                         │
+                         ▼
+                  Print Manager jobs
+                         │
+          ┌──────────────┴──────────────┐
+          ▼                             ▼
+DirectLanFileTransfer       ValidatedLegacyLanStart
+ upload only                 start only, at-most-once
+```
+
+The selected printer `device_id` is the only persisted HA selection. On discovery/reload the
+adapter resolves entities from the entity registry with `platform == anycubic_cloud` and exact
+`translation_key`; ACE child devices are included only through `via_device_id`. It does not use
+friendly names or entity-id suffixes. HA state is the hardware source of truth. The two direct
+LAN classes are retained only for the currently validated upload/start transport and do not expose
+ACE parsing, telemetry polling, pause/resume/cancel or reconciliation.
+
+| `translation_key` | `PrinterSnapshot` field |
+|---|---|
+| `printer_online`, `is_available`, `is_busy`, `current_status` | `online`, `available`, `busy`, `status` |
+| `job_name`, `job_state`, `job_progress`, `job_is_paused` | `job.name`, `job.state`, `job.progress`, `job.paused` |
+| `job_current_layer`, `job_total_layers`, `job_time_elapsed`, `job_time_remaining`, `job_eta` | corresponding `job.*` field |
+| `curr_nozzle_temp`, `target_nozzle_temp`, `curr_hotbed_temp`, `target_hotbed_temp` | corresponding `thermal.*` field |
+| `last_error_code`, `last_error` | `fault.code`, `fault.message` |
+| `ace_loaded_slot`, `ace_slot_1` … `ace_slot_4`, `ace_spools` | `ace.loaded_slot`, `ace.normalized` |
+
+| Command | Actual transport |
+|---|---|
+| Pause / resume / cancel | `button.press` through Home Assistant |
+| G-code upload | `DirectLanFileTransfer` (printer local HTTP) |
+| Start | `ValidatedLegacyLanStart` (single MQTT publish; no retry) |
 
 If ACE material changes from PLA, the slice is invalidated. If only RGB changes, the slice may
 remain technically valid but the mapping/preview are refreshed and human confirmation is cleared.

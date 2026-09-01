@@ -1,14 +1,24 @@
-# Procedimento físico conservador
+# Verificação física v2 (NÃO automatizada)
 
-Nenhuma etapa deste documento é executada automaticamente pelo projeto.
+Não execute o start físico sem estar junto à Kobra X. Nenhuma destas verificações é simulada
+pelos testes unitários.
 
-1. Configure apenas o IP LAN da Kobra X e mapeie todas as entidades obrigatórias do Home Assistant.
-2. Com `KOBRA_HARDWARE_TEST` ausente, abra o add-on e confira o estado LAN e o cross-check do Home Assistant.
-3. Consulte ACE; confirme o `raw`, `parsed` e o slot normalizado escolhido, que deve ser PLA.
-4. Envie `20mm_cube.stl`, confira preview, dimensões, perfis resolved e SHA-256 de G-code.
-5. Confirme que o G-code contém `G9111`, não contém `M600`/`T1`, tem temperaturas dentro do PLA e cabe em 260 mm.
-6. Só para validação de upload, habilite `KOBRA_HARDWARE_TEST=1`, mantenha `KOBRA_ALLOW_PHYSICAL_PRINT` ausente e execute o fluxo até a confirmação. O endpoint continuará recusando o start físico; registre a resposta do upload somente se um mecanismo de upload isolado for adicionado para o teste.
-7. Verifique visualmente na impressora que o arquivo remoto correto existe e que a mesa está livre.
-8. Em sessão separada, com supervisão junto à impressora, habilite também `KOBRA_ALLOW_PHYSICAL_PRINT=1`, refaça preflight e confirmação e então pressione Imprimir uma única vez. Não repita o clique se houver timeout: o estado deve ser `START_UNKNOWN` e a reconciliação apenas consulta a impressora.
+1. Confirme que `anycubic_cloud` está conectado em LAN Mode no Home Assistant e escolha a
+   impressora pelo fluxo de descoberta do add-on. Não mapeie entidades manualmente.
+2. Consulte `GET /api/printer/integration`: `telemetry_from_ha` e `ace_from_ha` devem ser verdadeiros,
+   enquanto `local_start_via_ha` deve continuar falso no baseline atual.
+3. Verifique que `GET /api/printer/state` mostra o ACE correto e que nenhuma conexão MQTT/poller
+   adicional do Print Manager aparece nos logs.
+4. Faça slice do cubo de 20 mm e confirme que o snapshot de ACE salvo no job corresponde ao slot
+   escolhido. Troque o spool antes do preflight e confirme que o job é bloqueado para nova confirmação.
+5. Com mesa livre, envie o job. Observe um único upload HTTP local e exatamente uma publicação de
+   start. Não clique novamente se o estado for `START_UNKNOWN`.
+6. Confirme nas entidades HA o filename, `is_busy`, progresso, camadas e temperaturas. Só então o
+   job deve alcançar `MONITORING`.
+7. Teste pause, resume e cancel pelos endpoints do job; confirme no histórico do job a chamada
+   `button.press` e a transição de estado posterior. HTTP 200 isoladamente não é confirmação física.
+8. Reinicie o add-on durante uma impressão. Confirme que o job é reconstruído pelo estado HA sem
+   uma nova publicação de start.
 
-Se a etapa 8 falhar ou ficar incerta, desligue as flags e investigue usando telemetria e logs sem tokens.
+Se a etapa 5 ficar ambígua, mantenha `START_UNKNOWN`, não reenvie e investigue por telemetria do
+Home Assistant e logs sem credenciais.
