@@ -1,16 +1,17 @@
 # Kobra X Local Slicer
 
 Reference Home Assistant App for **local-only** STL/3MF slicing and LAN printing on an
-**Anycubic Kobra X + ACE**. V1 is deliberately narrow: 0.4 mm nozzle, 0.20 mm layer,
+**Anycubic Kobra X + ACE**. Version 2 remains deliberately narrow: 0.4 mm nozzle, 0.20 mm layer,
 PLA, one color, one plate, STL or single-plate 3MF.
 
 ## Safety model
 
 The App never auto-starts from a completed slice. A user confirmation is bound to the SHA-256
-of the generated G-code. Immediately before printing the App refreshes LAN/MQTT, Home Assistant
-cross-check state, ACE material/color, local G-code hash and printer availability. `print/start`
-is sent **at most once**. A timeout or disconnect after publish enters `START_UNKNOWN`; the App
-queries current printer state/filename and never sends a second start automatically.
+of the generated G-code. Hardware state, ACE and controls come from `anycubic_cloud` through
+the Home Assistant WebSocket lifecycle; direct LAN is used only for temporary upload bootstrap,
+HTTP upload and the one-shot validated start. A durable start intent is saved before publish.
+`print/start` is sent **at most once**. A timeout or disconnect enters `START_UNKNOWN`; recovery
+observes Home Assistant and never sends a second start automatically.
 
 The upload URL returned by the printer is treated as untrusted input. It must be exactly
 `http://<configured-printer-host>:18910/gcode_upload?s=<non-empty-token>`. Redirects are disabled,
@@ -98,9 +99,9 @@ publish it to the target Git repository, then reload the App store and build/ins
 ## Onboarding
 
 The Ingress panel asks for the Kobra X LAN IP and discovers `anycubic_cloud` devices through the
-Home Assistant WebSocket registry API using `SUPERVISOR_TOKEN`. It proposes role mappings, but
-requires the safety-critical roles (`online`, `available`, `busy`, `job_in_progress`, `state`,
-`filename`) to be mapped before saving. Only entity IDs are persisted in `/data/config.json`.
+Home Assistant WebSocket registry API using `SUPERVISOR_TOKEN`. Select only the printer device;
+the adapter resolves current `anycubic_cloud` entity IDs by exact `translation_key`, including an
+ACE child via `via_device_id`. Only the printer `device_id` is persisted in `/data/config.json`.
 No Home Assistant long-lived token or Anycubic cloud credential is stored.
 
 ## Known verification points
@@ -110,8 +111,8 @@ invented:
 
 1. Auto-orient is intentionally limited to safe manual preview because a supported Orca 2.4.2
    CLI invocation has not been verified in this environment.
-2. Upload reproduces the observed BBL-style header names, but identifies this client as
-   `KobraXLocalSlicer/0.1.8` instead of inventing an Anycubic Slicer Next version. If the Kobra X
+2. Upload reproduces the observed BBL-style header names and identifies this client as
+   `KobraXLocalSlicer/2.0.0`. If the Kobra X
    firmware turns out to require a specific value for an optional header, capture it in a
    hardware test and pin it explicitly.
 

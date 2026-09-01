@@ -21,6 +21,5 @@ pela soma SHA-256, extrai a AppImage sem FUSE e faz o smoke test HTTP da imagem.
 
 ## Limite físico
 
-O endpoint de início físico exige simultaneamente `KOBRA_HARDWARE_TEST=1` e
-`KOBRA_ALLOW_PHYSICAL_PRINT=1`. Essas variáveis não são habilitadas pelo build, pelo frontend
-nem pelos testes automáticos.
+Upload, start, controles e troca automática de slot continuam pendentes de validação física.
+O roteiro está em `docs/HARDWARE_TESTS.md`; nenhum teste automático inicia impressão física.
