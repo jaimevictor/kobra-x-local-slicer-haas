@@ -618,8 +618,8 @@ class AnycubicHomeAssistantAdapter:
             dry_status_is_drying=_bool(_state(states.get("dry_status_is_drying"))),
         )
 
-    async def snapshot(self) -> PrinterSnapshot:
-        states = await self._states()
+    async def snapshot(self, *, refresh: bool = False) -> PrinterSnapshot:
+        states = await self._refresh_states() if refresh else await self._states()
         now = datetime.now(UTC)
         dates = []
         for row in states.values():

@@ -1,10 +1,14 @@
 from __future__ import annotations
-import asyncio,hashlib,json,os,shutil
+import asyncio,hashlib,json,os,shlex,shutil
 from pathlib import Path
 from app.core.models import Orientation
 class OrcaError(RuntimeError):pass
 class OrcaRunner:
- def __init__(self,profile_dir:Path,timeout_seconds:int,gcode_limit_bytes:int): self.profile_dir=profile_dir;self.timeout_seconds=timeout_seconds;self.gcode_limit_bytes=gcode_limit_bytes;self.app=os.getenv('ORCA_APP','OrcaSlicer');self.version=os.getenv('ORCA_VERSION','2.4.2')
+ def __init__(self,profile_dir:Path,timeout_seconds:int,gcode_limit_bytes:int):
+  self.profile_dir=profile_dir;self.timeout_seconds=timeout_seconds;self.gcode_limit_bytes=gcode_limit_bytes
+  self.app=tuple(shlex.split(os.getenv('ORCA_APP','OrcaSlicer')))
+  if not self.app: raise OrcaError('ORCA_APP cannot be empty')
+  self.version=os.getenv('ORCA_VERSION','2.4.2')
  def _profile(self,name:str)->Path:
   p=self.profile_dir/name
   if not p.is_file(): raise OrcaError(f'resolved profile missing: {name}')
@@ -31,19 +35,28 @@ class OrcaRunner:
   # must not be considered outputs of the new invocation.
   self._clear_previous_gcode(directory)
   # Verified with OrcaSlicer 2.4.2 --help in the built image.
-  cmd=[self.app,'--load-settings',f'{machine};{process}','--load-filaments',str(filament),'--ensure-on-bed','--outputdir',str(directory),'--slice','0',str(input_path)]
+  cmd=[*self.app,'--load-settings',f'{machine};{process}','--load-filaments',str(filament),'--ensure-on-bed','--outputdir',str(directory),'--slice','0',str(input_path)]
   if orientation==Orientation.ROTATE_X_90: cmd.extend(['--rotate-x','90'])
   if orientation==Orientation.ROTATE_Y_90: cmd.extend(['--rotate-y','90'])
   if orientation==Orientation.ROTATE_Z_90: cmd.extend(['--rotate','90'])
   try:
-   proc=await asyncio.wait_for(asyncio.create_subprocess_exec(*cmd,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE),10)
-   stdout,stderr=await asyncio.wait_for(proc.communicate(),self.timeout_seconds)
+   proc=await asyncio.create_subprocess_exec(*cmd,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
   except FileNotFoundError as exc: raise OrcaError('OrcaSlicer executable unavailable') from exc
+  try:
+   stdout,stderr=await asyncio.wait_for(proc.communicate(),self.timeout_seconds)
+  except asyncio.TimeoutError as exc:
+   proc.kill()
+   stdout,stderr=await proc.communicate()
+   output=(stdout+b'\n'+stderr).decode(errors='replace').strip()[-2000:]
+   command=' '.join(shlex.quote(part) for part in cmd)
+   raise OrcaError(f'Orca slicing timed out after {self.timeout_seconds}s; command={command}; output={output or "(no output)"}') from exc
   generated=list(directory.glob('*.gcode'))
   if proc.returncode or len(generated)!=1:
    output=(stdout+b'\n'+stderr).decode(errors='replace').strip()[-2000:]
    files=', '.join(sorted(path.name for path in directory.iterdir()))
-   raise OrcaError(f'Orca slicing failed: exit={proc.returncode}, gcode_files={len(generated)}, supports={supports_enabled}, files=[{files}], output={output or "(no output)"}')
+   signal=f', signal={-proc.returncode}' if proc.returncode is not None and proc.returncode<0 else ''
+   command=' '.join(shlex.quote(part) for part in cmd)
+   raise OrcaError(f'Orca slicing failed: exit={proc.returncode}{signal}, gcode_files={len(generated)}, supports={supports_enabled}, files=[{files}], command={command}, output={output or "(no output)"}')
   if generated[0]!=out: generated[0].replace(out)
   if out.stat().st_size>self.gcode_limit_bytes: raise OrcaError('Orca output exceeds G-code limit')
   return out

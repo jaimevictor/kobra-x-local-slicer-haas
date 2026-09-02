@@ -93,6 +93,29 @@ async def test_snapshot_keeps_unknown_false_and_zero_distinct(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_snapshot_refresh_bypasses_the_event_cache(monkeypatch):
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
+    adapter = AnycubicHomeAssistantAdapter("printer")
+    states = {"printer_online": _row("on")}
+    refreshes = 0
+
+    async def cached_states():
+        raise AssertionError("the cached snapshot must not be used")
+
+    async def refreshed_states():
+        nonlocal refreshes
+        refreshes += 1
+        return states
+
+    monkeypatch.setattr(adapter, "_states", cached_states)
+    monkeypatch.setattr(adapter, "_refresh_states", refreshed_states)
+    snapshot = await adapter.snapshot(refresh=True)
+
+    assert refreshes == 1
+    assert snapshot.online is True
+
+
+@pytest.mark.asyncio
 async def test_successful_idle_snapshot_is_fresh_despite_old_entity_timestamps(
     monkeypatch,
 ):

@@ -10,6 +10,11 @@ _NEXT = {
     JobState.INSPECTING: {JobState.READY_TO_SLICE, JobState.FAILED},
     JobState.READY_TO_SLICE: {JobState.SLICING, JobState.CANCELLED, JobState.EXPIRED},
     JobState.SLICING: {JobState.SLICED, JobState.FAILED, JobState.FAILED_RECOVERABLE},
+    JobState.FAILED_RECOVERABLE: {
+        JobState.READY_TO_SLICE,
+        JobState.CANCELLED,
+        JobState.EXPIRED,
+    },
     JobState.SLICED: {JobState.AWAITING_CONFIRMATION, JobState.READY_TO_SLICE},
     JobState.AWAITING_CONFIRMATION: {
         JobState.PREFLIGHT,

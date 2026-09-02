@@ -9,6 +9,8 @@ def test_ace_preserves_missing_fields_and_slot_mapping():
 def test_no_automatic_sliced_to_print_transition():
  with pytest.raises(TransitionError):assert_transition(JobState.SLICED,JobState.UPLOADING_TO_PRINTER)
  assert_transition(JobState.STARTING,JobState.START_UNKNOWN)
+def test_recoverable_slice_failure_can_return_to_slice_setup():
+ assert_transition(JobState.FAILED_RECOVERABLE,JobState.READY_TO_SLICE)
 def test_default_pla_prefers_loaded_slot_then_first_pla():
  snapshot=parse_ace_payload({'data':{'slots':[{'materialType':'PLA','isLoaded':False},{'materialType':'PLA','isLoaded':True}]}})
  assert select_default_pla(snapshot).human_slot==2

@@ -42,7 +42,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     ORCA_VERSION=${ORCA_VERSION} \
-    ORCA_APP=/opt/orca/AppRun \
+    ORCA_APP="/usr/bin/xvfb-run -a /opt/orca/AppRun" \
     KOBRA_DATA_DIR=/data \
     KOBRA_PROFILE_DIR=/opt/kobra/profiles/resolved
 RUN apt-get update && apt-get install -y --no-install-recommends \

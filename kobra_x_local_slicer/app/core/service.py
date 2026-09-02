@@ -113,11 +113,11 @@ class AppService:
                 ) from exc
         return self._ha
 
-    async def printer_snapshot(self):
+    async def printer_snapshot(self, *, refresh: bool = False):
         try:
             adapter = self._ha_adapter()
             await adapter.start()
-            return await adapter.snapshot()
+            return await adapter.snapshot(refresh=refresh)
         except HomeAssistantError as exc:
             raise ServiceError(
                 f"Home Assistant anycubic_cloud state unavailable: {exc}"
@@ -272,7 +272,9 @@ class AppService:
             await upload.close()
 
     async def ace(self, job_id: str | None = None):
-        printer = await self.printer_snapshot()
+        # An explicit ACE request is an operator action. Refresh once before
+        # rejecting it so a quiet-but-healthy HA event stream cannot strand a job.
+        printer = await self.printer_snapshot(refresh=True)
         snapshot = printer.ace
         if snapshot is None:
             raise ServiceError("ACE is unavailable from Home Assistant anycubic_cloud")
@@ -313,8 +315,12 @@ class AppService:
             JobState.READY_TO_SLICE,
             JobState.SLICED,
             JobState.AWAITING_CONFIRMATION,
+            JobState.FAILED_RECOVERABLE,
         }:
             raise ServiceError("orientation cannot change in current state")
+        if record.state == JobState.FAILED_RECOVERABLE:
+            self._transition(record, JobState.READY_TO_SLICE)
+            record.error = None
         record.orientation = orientation
         record.slice_stats = None
         record.approved_gcode_sha256 = None
@@ -337,8 +343,12 @@ class AppService:
             JobState.READY_TO_SLICE,
             JobState.SLICED,
             JobState.AWAITING_CONFIRMATION,
+            JobState.FAILED_RECOVERABLE,
         }:
             raise ServiceError("supports cannot change in current state")
+        if record.state == JobState.FAILED_RECOVERABLE:
+            self._transition(record, JobState.READY_TO_SLICE)
+            record.error = None
         record.supports_enabled = enabled
         record.slice_stats = None
         record.approved_gcode_sha256 = None
@@ -359,6 +369,7 @@ class AppService:
             JobState.READY_TO_SLICE,
             JobState.SLICED,
             JobState.AWAITING_CONFIRMATION,
+            JobState.FAILED_RECOVERABLE,
         }:
             raise ServiceError("job is not ready to slice")
         fresh_ace = await self.ace(job_id)
@@ -387,6 +398,8 @@ class AppService:
             self._transition(record, JobState.READY_TO_SLICE)
         else:
             self._save(record)
+        record.error = None
+        self._save(record)
         self._transition(record, JobState.SLICING)
         directory = self.store.job_dir(job_id)
         try:
@@ -413,7 +426,7 @@ class AppService:
             self._transition(record, JobState.AWAITING_CONFIRMATION)
             return record
         except Exception as exc:
-            record.state = JobState.FAILED
+            self._transition(record, JobState.FAILED_RECOVERABLE)
             record.error = str(exc)
             self._save(record)
             raise
@@ -463,7 +476,7 @@ class AppService:
             # This LAN info request is a narrow bootstrap for the printer-supplied upload URL.
             # It is not used for printer telemetry, ACE, polling, or reconciliation.
             info, upload_device_id = await self.lan.upload_bootstrap()
-            ha = await self.printer_snapshot()
+            ha = await self.printer_snapshot(refresh=True)
             if ha.stale or not ha.essential_entities_available:
                 raise ServiceError(
                     "Home Assistant printer state is stale or incomplete"

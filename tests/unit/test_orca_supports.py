@@ -29,3 +29,9 @@ def test_slice_removes_previous_gcode_from_the_same_job_directory(tmp_path):
     runner._clear_previous_gcode(job_dir)
     assert not old_output.exists()
     assert not old_plate.exists()
+
+
+def test_orca_command_can_include_a_headless_wrapper(monkeypatch, tmp_path):
+    monkeypatch.setenv("ORCA_APP", "/usr/bin/xvfb-run -a /opt/orca/AppRun")
+    runner = OrcaRunner(tmp_path, timeout_seconds=10, gcode_limit_bytes=1_000_000)
+    assert runner.app == ("/usr/bin/xvfb-run", "-a", "/opt/orca/AppRun")
