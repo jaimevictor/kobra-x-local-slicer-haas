@@ -176,6 +176,8 @@ class AppService:
         return directory / record.input_filename
 
     async def create_job(self, upload: UploadFile) -> JobRecord:
+        if Path(upload.filename or "").suffix.lower() not in {".stl", ".3mf"}:
+            raise ServiceError("Upload an STL or 3MF model. Pre-sliced G-code files are not supported.")
         filename = sanitize_filename(
             upload.filename or "upload", allowed_extensions={".stl", ".3mf"}
         )

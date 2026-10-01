@@ -1,4 +1,9 @@
 const english = new Map(Object.entries({
+  'Impressora selecionada':'Printer selected','Salve a conexão para confirmar.':'Save the connection to confirm.',
+  'Salvando…':'Saving…','Falha ao salvar conexão':'Failed to save connection',
+  'Conexão salva. Use Descobrir para selecionar outra impressora.':'Connection saved. Use Discover to select another printer.',
+  'Envie um modelo STL ou 3MF. Arquivos G-code já fatiados não são aceitos.':'Upload an STL or 3MF model. Pre-sliced G-code files are not supported.',
+
   'Impressão local':'Local printing','Estado da impressora indisponível':'Printer state unavailable','Verificando…':'Checking…',
   'ESTÚDIO DE IMPRESSÃO':'PRINT STUDIO','Do modelo à impressão,':'From model to print,','com controle em cada etapa.':'with control at every step.',
   'Prepare a peça, confira o filamento e revise o fatiamento antes de iniciar na Kobra X.':'Prepare your model, check the filament, and review the slice before starting the Kobra X.',

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.core.models import Orientation
 from app.core.security import validate_printer_host
 from app.kobra.lan import ValidatedLegacyLanStart
-from app.ha.client import AnycubicHomeAssistantAdapter
+from app.ha.client import AnycubicHomeAssistantAdapter, ESSENTIAL_KEYS
 
 router = APIRouter()
 LOGGER = logging.getLogger(__name__)
@@ -91,10 +91,10 @@ async def set_config(body: ConfigInput, request: Request):
             raise ValueError("Anycubic printer device selection is required")
         adapter = AnycubicHomeAssistantAdapter(body.ha_device_id)
         await adapter.resolve()
-        snapshot = await adapter.snapshot()
-        if not snapshot.essential_entities_available:
+        missing = [key for key in ESSENTIAL_KEYS if key not in adapter.entities]
+        if missing:
             raise ValueError(
-                "selected device is missing required anycubic_cloud entities"
+                "selected device is missing required anycubic_cloud entities: " + ", ".join(missing)
             )
         s = request.app.state.settings
         host = validate_printer_host(body.printer_host)

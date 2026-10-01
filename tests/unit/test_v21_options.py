@@ -38,21 +38,22 @@ def test_ha_device_ip_is_validated_and_only_from_selected_device():
     rows = [{"translation_key": "printer_online", "entity_id": "binary_sensor.kobra"}]
     states = {"binary_sensor.kobra": {"attributes": {"ip_address": "192.168.1.42"}}}
     assert _printer_ip({}, rows, states) == "192.168.1.42"
-    assert _printer_ip({"configuration_url": "http://10.0.0.4/status"}, rows, states) == "10.0.0.4"
+    assert _printer_ip({"configuration_url": "http://10.0.0.4/status"}, rows, states) == "192.168.1.42"
     assert _printer_ip({"configuration_url": "https://example.com/"}, rows, {}) is None
 
 
 @pytest.mark.asyncio
-async def test_config_save_starts_home_assistant_lifecycle(monkeypatch, tmp_path):
+async def test_config_save_starts_lifecycle_with_temporarily_unavailable_entities(monkeypatch, tmp_path):
     class Adapter:
         def __init__(self, device_id):
             self.device_id = device_id
+            self.entities = dict.fromkeys(routes.ESSENTIAL_KEYS, "sensor.test")
 
         async def resolve(self):
             pass
 
         async def snapshot(self):
-            return SimpleNamespace(essential_entities_available=True)
+            return SimpleNamespace(essential_entities_available=False)
 
     class Lan:
         def __init__(self, host):
@@ -78,3 +79,19 @@ async def test_config_save_starts_home_assistant_lifecycle(monkeypatch, tmp_path
     assert service.started is True
     assert service.lan.host == "192.168.1.20"
     assert state.integration_error is None
+
+
+@pytest.mark.asyncio
+async def test_gcode_upload_rejected_before_creating_job(tmp_path):
+    from fastapi import UploadFile
+    from io import BytesIO
+    service = AppService(Settings(data_dir=tmp_path))
+    with pytest.raises(ServiceError, match="STL or 3MF"):
+        await service.create_job(UploadFile(filename="part_MK3S.gcode", file=BytesIO(b"G1 X1")))
+    assert service.store.list() == []
+
+
+def test_ip_falls_back_to_registry_when_live_address_invalid():
+    rows = [{"translation_key": "ip_address", "entity_id": "sensor.ip"}]
+    states = {"sensor.ip": {"state": "unavailable", "attributes": {}}}
+    assert _printer_ip({"configuration_url": "http://10.0.0.4/status"}, rows, states) == "10.0.0.4"

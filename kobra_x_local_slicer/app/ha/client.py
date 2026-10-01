@@ -237,6 +237,13 @@ def _rgb(value: Any) -> tuple[int, int, int] | None:
 def _printer_ip(device: dict[str, Any], rows: list[dict[str, Any]], states: dict[str, dict[str, Any]]) -> str | None:
     """Use only an IP published for this HA device by its integration."""
     candidates: list[Any] = []
+    for row in rows:
+        entity_id = row.get("entity_id")
+        state = states.get(entity_id, {})
+        if _translation_key(row) in {"ip_address", "printer_ip", "lan_host"}:
+            candidates.append(state.get("state"))
+        attrs = _attrs(state)
+        candidates.extend(attrs.get(key) for key in ("ip_address", "printer_ip", "lan_host"))
     url = device.get("configuration_url")
     if isinstance(url, str):
         try:
@@ -246,13 +253,6 @@ def _printer_ip(device: dict[str, Any], rows: list[dict[str, Any]], states: dict
     for connection in device.get("connections") or []:
         if isinstance(connection, (list, tuple)) and len(connection) == 2 and connection[0] in {"ip", "ipv4", "ipv6"}:
             candidates.append(connection[1])
-    for row in rows:
-        entity_id = row.get("entity_id")
-        state = states.get(entity_id, {})
-        if _translation_key(row) in {"ip_address", "printer_ip", "lan_host"}:
-            candidates.append(state.get("state"))
-        attrs = _attrs(state)
-        candidates.extend(attrs.get(key) for key in ("ip_address", "printer_ip", "lan_host"))
     for value in candidates:
         try:
             return str(ipaddress.ip_address(value))
