@@ -131,3 +131,17 @@ invented:
    hardware test and pin it explicitly.
 
 See `docs/CODEX_HANDOFF.md` and `docs/HARDWARE_TESTS.md` for validation and physical-test sequencing.
+
+## Mobile print workflow
+
+The responsive UI follows Import → Prepare → Preview → Validate → Print, with a purple accent, light/dark themes and collapsed technical details. The monitor uses actual Home Assistant progress, elapsed/remaining time and nozzle/bed temperatures. Stale telemetry clears values and disables controls. Changing preparation options revokes the previous review and table-clear consent. The final action retains hash-bound confirmation and a fresh hardware preflight.
+
+Browser regression checks use fixture APIs and never contact a printer. Install `playwright` and Chromium, then run against the vendor directory from the Docker frontend build:
+
+```bash
+pip install playwright
+playwright install chromium
+python scripts/verify_ui.py --vendor-dir kobra_x_local_slicer/app/static/vendor
+```
+
+An existing Chrome executable can be supplied with `--browser PATH`; `--output-dir PATH` saves mobile/desktop screenshots.

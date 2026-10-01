@@ -1,6 +1,6 @@
 # UI reference study
 
-Status: reference study only. No redesign authorized or implemented.
+Status: implementation authorized on October 1, 2026. The latest five-screen purple Slice concept supersedes the earlier blue/dark-only direction.
 
 The user supplied three mobile screenshots in the October 1, 2026 conversation. These notes record observations; the original image files are not stored in this repository.
 
@@ -27,3 +27,9 @@ Retain the existing desktop workflow, accessible contrast, keyboard operation, a
 - Taste: https://github.com/leonxlnx/taste-skill
 - I Have ADHD: https://github.com/ayghri/i-have-adhd
 - Caveman: already available locally in the Codex skills catalog.
+
+## Implemented Slice concept
+
+Five responsive stages: Import, Prepare, Preview, Validate and Print. Neutral light/dark surfaces, purple #8754D9, large touch targets and collapsed technical details. Existing native HTML/CSS/Three.js stack retained. Mobile and desktop use the same real workflow.
+
+Only supported STL/3MF inputs and actual Home Assistant telemetry are exposed. Preview remains the real top-down layer extrusion path, not a fabricated speed-colored 3D render. Camera, cloud library, scaling and infill editing are not shown because the current backend does not provide these capabilities. Validation does not imply a fresh hardware preflight: this runs at send time. Table-clear consent, hash-bound confirmation and at-most-once start remain intact.
