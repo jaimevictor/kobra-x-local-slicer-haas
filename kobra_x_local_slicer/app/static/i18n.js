@@ -1,4 +1,9 @@
 const english = new Map(Object.entries({
+  'Endereço manual preservado. Confira o IP atual no painel da impressora.':'Manual address preserved. Check the current IP on the printer panel.',
+  'IP informado pelo Home Assistant; confira se corresponde ao painel da impressora.':'IP reported by Home Assistant; check it matches the printer panel.',
+  'O Home Assistant não informou um IP confiável. Digite o IP atual mostrado no painel da impressora.':'Home Assistant did not report a reliable IP. Enter the current IP shown on the printer panel.',
+  'Endereço salvo. Se o IP mudou, use Descobrir ou informe o IP atual da impressora.':'Saved address. If the IP changed, use Discover or enter the current printer IP.',
+
   'Etapas da impressão':'Print steps','Importar':'Import','Preparar':'Prepare','Prévia':'Preview','Validar':'Validate',
   'Escolha um modelo para começar.':'Choose a model to begin.',
   'Confira a orientação, o material e a qualidade.':'Check orientation, material and quality.',

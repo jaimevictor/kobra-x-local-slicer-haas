@@ -145,3 +145,9 @@ python scripts/verify_ui.py --vendor-dir kobra_x_local_slicer/app/static/vendor
 ```
 
 An existing Chrome executable can be supplied with `--browser PATH`; `--output-dir PATH` saves mobile/desktop screenshots.
+
+### Printer IP after a network change
+
+The app connects to HA through `ws://supervisor/core/websocket`; no HAOS LAN IP is needed. Printer discovery uses only IP sensors/attributes published for the selected `anycubic_cloud` device. A device configuration URL is not a printer address and is never used as one. Restored/unavailable values and conflicting addresses are rejected.
+
+If HA still reports an old address, open **Printer connection**, select the printer, enter its current numeric IP from the printer panel, and **Save connection**. A manually edited address is preserved when rediscovering the same device. Saved addresses are not automatically replaced or inferred by scanning the network. Enable LAN Mode on the printer for local upload/start.

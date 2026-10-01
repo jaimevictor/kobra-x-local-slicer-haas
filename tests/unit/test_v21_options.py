@@ -36,7 +36,7 @@ def test_layer_change_invalidates_previous_confirmation(tmp_path):
 
 def test_ha_device_ip_is_validated_and_only_from_selected_device():
     rows = [{"translation_key": "printer_online", "entity_id": "binary_sensor.kobra"}]
-    states = {"binary_sensor.kobra": {"attributes": {"ip_address": "192.168.1.42"}}}
+    states = {"binary_sensor.kobra": {"state": "on", "attributes": {"ip_address": "192.168.1.42"}}}
     assert _printer_ip({}, rows, states) == "192.168.1.42"
     assert _printer_ip({"configuration_url": "http://10.0.0.4/status"}, rows, states) == "192.168.1.42"
     assert _printer_ip({"configuration_url": "https://example.com/"}, rows, {}) is None
@@ -91,7 +91,7 @@ async def test_gcode_upload_rejected_before_creating_job(tmp_path):
     assert service.store.list() == []
 
 
-def test_ip_falls_back_to_registry_when_live_address_invalid():
+def test_ip_does_not_fall_back_to_registry_when_live_address_invalid():
     rows = [{"translation_key": "ip_address", "entity_id": "sensor.ip"}]
     states = {"sensor.ip": {"state": "unavailable", "attributes": {}}}
-    assert _printer_ip({"configuration_url": "http://10.0.0.4/status"}, rows, states) == "10.0.0.4"
+    assert _printer_ip({"configuration_url": "http://10.0.0.4/status"}, rows, states) is None

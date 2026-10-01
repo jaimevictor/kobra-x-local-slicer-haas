@@ -12,7 +12,6 @@ import asyncio
 import ipaddress
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
 
 import aiohttp
 import httpx
@@ -234,31 +233,52 @@ def _rgb(value: Any) -> tuple[int, int, int] | None:
         return None
 
 
-def _printer_ip(device: dict[str, Any], rows: list[dict[str, Any]], states: dict[str, dict[str, Any]]) -> str | None:
-    """Use only an IP published for this HA device by its integration."""
-    candidates: list[Any] = []
+def _printer_ip_details(
+    rows: list[dict[str, Any]], states: dict[str, dict[str, Any]]
+) -> tuple[str | None, str | None]:
+    """Resolve integration-published addresses, never registry URLs or connections.
+
+    Configuration URLs may point to HA itself. Registry connections and restored
+    attributes can survive DHCP changes. Explicit IP sensors outrank incidental
+    attributes; contradictory values require manual input instead of a guess.
+    """
+    keys = {"ip_address", "printer_ip", "lan_host"}
+    explicit: list[tuple[Any, str]] = []
+    attributes: list[tuple[Any, str]] = []
+    has_explicit_sensor = False
     for row in rows:
+        if row.get("disabled_by"):
+            continue
         entity_id = row.get("entity_id")
+        if not isinstance(entity_id, str):
+            continue
+        dedicated = _translation_key(row) in keys
+        has_explicit_sensor |= dedicated
         state = states.get(entity_id, {})
-        if _translation_key(row) in {"ip_address", "printer_ip", "lan_host"}:
-            candidates.append(state.get("state"))
         attrs = _attrs(state)
-        candidates.extend(attrs.get(key) for key in ("ip_address", "printer_ip", "lan_host"))
-    url = device.get("configuration_url")
-    if isinstance(url, str):
+        if attrs.get("restored") is True or _state(state) in {None, "unknown", "unavailable"}:
+            continue
+        if dedicated:
+            explicit.append((_state(state), entity_id))
+        else:
+            attributes.extend((attrs[key], entity_id) for key in keys if key in attrs)
+    valid: dict[str, str] = {}
+    for value, entity_id in explicit if has_explicit_sensor else attributes:
         try:
-            candidates.append(urlparse(url).hostname)
-        except ValueError:
-            pass
-    for connection in device.get("connections") or []:
-        if isinstance(connection, (list, tuple)) and len(connection) == 2 and connection[0] in {"ip", "ipv4", "ipv6"}:
-            candidates.append(connection[1])
-    for value in candidates:
-        try:
-            return str(ipaddress.ip_address(value))
+            address = ipaddress.ip_address(value)
         except (ValueError, TypeError):
             continue
-    return None
+        if address.is_unspecified or address.is_loopback or address.is_multicast or address.is_link_local:
+            continue
+        valid[str(address)] = entity_id
+    if len(valid) != 1:
+        return None, None
+    return next(iter(valid.items()))
+
+
+def _printer_ip(device: dict[str, Any], rows: list[dict[str, Any]], states: dict[str, dict[str, Any]]) -> str | None:
+    # Kept for callers; device registry metadata is intentionally not consulted.
+    return _printer_ip_details(rows, states)[0]
 
 
 class AnycubicHomeAssistantAdapter:
@@ -372,13 +392,15 @@ class AnycubicHomeAssistantAdapter:
             mapping, unresolved = suggest_entity_map(rows)
             ace_rows = [row for ident in ace_ids for row in by_device[ident]]
             device = device_map.get(device_id, {})
+            printer_host, printer_host_source = _printer_ip_details(rows, state_map)
             candidates.append(
                 {
                     "device_id": device_id,
                     "name": str(
                         device.get("name_by_user") or device.get("name") or device_id
                     ),
-                    "printer_host": _printer_ip(device, rows, state_map),
+                    "printer_host": printer_host,
+                    "printer_host_source": printer_host_source,
                     "entities": [
                         {
                             "entity_id": row["entity_id"],

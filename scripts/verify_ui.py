@@ -82,6 +82,7 @@ def run(browser_path, vendor_dir, output_dir):
             )
             page = context.new_page()
             errors, starts, confirmations = [], [], []
+            saved_config = {"printer_host": "192.168.1.50", "ha_device_id": "fixture"}
             job = dict(BASE_JOB)
             snapshot = json.loads(json.dumps(SNAPSHOT))
             page.on("pageerror", lambda error: errors.append(str(error)))
@@ -115,10 +116,21 @@ def run(browser_path, vendor_dir, output_dir):
                 elif path == "/api/printer/state":
                     payload = snapshot
                 elif path == "/api/config":
-                    payload = {
-                        "printer_host": "192.168.1.50",
-                        "ha_device_id": "fixture",
-                    }
+                    if method == "PUT":
+                        saved_config.update(request_route.request.post_data_json)
+                        payload = {"ok": True}
+                    else:
+                        payload = saved_config
+                elif path == "/api/onboarding/discover":
+                    payload = [
+                        {
+                            "device_id": "fixture",
+                            "name": "Kobra X",
+                            "printer_host": None,
+                            "printer_host_source": None,
+                            "entities": [],
+                        }
+                    ]
                 elif path == "/api/jobs/active":
                     payload = []
                 elif path == "/api/jobs":
@@ -186,6 +198,25 @@ def run(browser_path, vendor_dir, output_dir):
                         path=str(output_dir / f"{width}-{stage}.png"), full_page=True
                     )
 
+            # Missing reliable HA IP must clear the old saved guess. Re-discovery
+            # must preserve a manual correction for the same selected printer.
+            page.locator("#configCard summary").first.click()
+            page.locator("#discoverHa").click()
+            page.wait_for_function(
+                "document.querySelector('#printerHost').value === ''"
+            )
+            page.locator("#printerHost").fill("192.168.1.99")
+            page.locator("#discoverHa").click()
+            page.wait_for_function(
+                "document.querySelector('#haCandidates input').checked"
+            )
+            assert page.locator("#printerHost").input_value() == "192.168.1.99"
+            page.locator("#saveConfig").click()
+            page.wait_for_function(
+                "document.querySelector('#haCandidates').children.length === 0"
+            )
+            assert saved_config["printer_host"] == "192.168.1.99"
+            page.locator("#configCard summary").first.click()
             check_layout("import")
             page.locator("#fileInput").set_input_files(
                 str(ROOT / "tests/fixtures/20mm_cube.stl")

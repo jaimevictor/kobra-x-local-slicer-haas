@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.1
+
+- Stop treating Home Assistant device configuration URLs and registry connections as printer IPs; these can refer to HAOS or outdated DHCP addresses.
+- Prefer explicit printer IP sensors over incidental attributes. Ignore restored, disabled and unavailable sources; conflicting addresses require manual entry.
+- Show the source entity for a discovered address and request the printer-panel IP when no reliable address is published.
+- Preserve manual IP corrections during discovery for the same printer; explain that saved addresses can become outdated.
+- Add discovery and browser regression checks for stale registry addresses and manual correction persistence.
+
 ## 2.2.0
 
 - Introduce a mobile-first five-stage print workflow with purple accents and light/dark themes.
