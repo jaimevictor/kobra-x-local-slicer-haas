@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio,hashlib,json,os,shlex,shutil
 from pathlib import Path
 from app.core.models import Orientation
+from app.slicer.geometry import rotate_stl
 LAYER_PROFILES={"0.08":"kobra_x_008_standard.resolved.json","0.12":"kobra_x_012_standard.resolved.json","0.16":"kobra_x_016_standard.resolved.json","0.20":"kobra_x_020_standard.resolved.json","0.24":"kobra_x_024_standard.resolved.json","0.28":"kobra_x_028_standard.resolved.json"}
 MATERIAL_PROFILES={"PLA":"anycubic_pla_kobra_x.resolved.json","PLA+":"anycubic_pla_plus_kobra_x.resolved.json","PETG":"anycubic_petg_kobra_x.resolved.json","ABS":"anycubic_abs_kobra_x.resolved.json","ASA":"anycubic_asa_kobra_x.resolved.json","TPU":"anycubic_tpu_kobra_x.resolved.json"}
 class OrcaError(RuntimeError):pass
@@ -36,11 +37,15 @@ class OrcaRunner:
   # while the previous successful result is normalized to output.gcode; both
   # must not be considered outputs of the new invocation.
   self._clear_previous_gcode(directory)
+  if orientation in {Orientation.ROTATE_X_90,Orientation.ROTATE_Y_90,Orientation.ROTATE_Z_90}:
+   if input_path.suffix.lower()!='.stl': raise OrcaError('baked rotation requires STL geometry')
+   rotated=directory/'input_oriented.stl'
+   await asyncio.to_thread(rotate_stl,input_path,rotated,orientation)
+   input_path=rotated
   # Verified with OrcaSlicer 2.4.2 --help in the built image.
   cmd=[*self.app,'--load-settings',f'{machine};{process}','--load-filaments',str(filament),'--ensure-on-bed','--outputdir',str(directory),'--slice','0',str(input_path)]
-  if orientation==Orientation.ROTATE_X_90: cmd.extend(['--rotate-x','90'])
-  if orientation==Orientation.ROTATE_Y_90: cmd.extend(['--rotate-y','90'])
-  if orientation==Orientation.ROTATE_Z_90: cmd.extend(['--rotate','90'])
+  # Orca 2.4.2 CLI rotation segfaults even for the golden cube on Linux.
+  # The selected transform is already baked into input_oriented.stl.
   try:
    proc=await asyncio.create_subprocess_exec(*cmd,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
   except FileNotFoundError as exc: raise OrcaError('OrcaSlicer executable unavailable') from exc

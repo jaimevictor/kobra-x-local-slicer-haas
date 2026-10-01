@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.2.2
+
+- Fix Orca 2.4.2 Linux CLI segmentation faults when rotating models along X, Y or Z.
+- Bake the selected rotation and bed placement into a separate binary STL before slicing; do not pass Orca CLI rotation flags.
+- Preserve source geometry, facet winding and the chosen orientation; re-slicing always starts from the original geometry.
+- Add asymmetric-geometry checks and real Orca PLA/PETG rotation regression tests.
+
 ## 2.2.1
 
 - Stop treating Home Assistant device configuration URLs and registry connections as printer IPs; these can refer to HAOS or outdated DHCP addresses.

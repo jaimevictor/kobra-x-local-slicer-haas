@@ -50,3 +50,20 @@ def test_golden_sanitized_3mf_with_supports_enabled(tmp_path):
  output_dir=tmp_path/'slice';output_dir.mkdir()
  output=asyncio.run(runner.slice(sanitized,output_dir,Orientation.ORIGINAL,True))
  assert output.stat().st_size>0
+
+
+@pytest.mark.parametrize("orientation", [Orientation.ROTATE_X_90, Orientation.ROTATE_Y_90, Orientation.ROTATE_Z_90])
+@pytest.mark.parametrize("material", ["PLA", "PETG"])
+def test_golden_rotated_cube(tmp_path, orientation, material):
+    runner = OrcaRunner(Path('/opt/kobra/profiles/resolved'), 600, 512*1024*1024)
+    source = Path('/tests/fixtures/20mm_cube.stl')
+    original = source.read_bytes()
+    output = asyncio.run(runner.slice(source, tmp_path, orientation, material=material))
+    analysis = inspect_gcode(output, filament_profile=runner.load_filament_profile(material), gcode_limit_bytes=512*1024*1024, orca_version=runner.version)
+    assert output.stat().st_size > 0
+    assert (tmp_path/'input_oriented.stl').is_file()
+    assert source.read_bytes() == original
+    assert analysis.has_g9111 and not analysis.has_m600
+    assert analysis.tools <= {0}
+    assert analysis.stats.dimensions.size[0] <= 20.1
+    assert analysis.stats.dimensions.size[1] <= 20.1

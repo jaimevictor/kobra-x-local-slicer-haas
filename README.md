@@ -151,3 +151,7 @@ An existing Chrome executable can be supplied with `--browser PATH`; `--output-d
 The app connects to HA through `ws://supervisor/core/websocket`; no HAOS LAN IP is needed. Printer discovery uses only IP sensors/attributes published for the selected `anycubic_cloud` device. A device configuration URL is not a printer address and is never used as one. Restored/unavailable values and conflicting addresses are rejected.
 
 If HA still reports an old address, open **Printer connection**, select the printer, enter its current numeric IP from the printer panel, and **Save connection**. A manually edited address is preserved when rediscovering the same device. Saved addresses are not automatically replaced or inferred by scanning the network. Enable LAN Mode on the printer for local upload/start.
+
+### Orca CLI rotations
+
+Orca 2.4.2 in the pinned Linux image exits with SIGSEGV/139 when CLI rotation flags are used, including on the golden cube. The app bakes X/Y/Z 90° rotations into a separate `input_oriented.stl`, centers it on the bed and places its minimum Z at zero before invoking Orca without rotation flags. Original uploads are retained. Single-material 3MF geometry uses the existing STL conversion before this transformation. Regression tests cover PLA and PETG on all three axes.
