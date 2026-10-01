@@ -76,7 +76,8 @@ async def health(request: Request):
 
 @router.get("/config")
 async def config(request: Request):
-    return {"printer_host": request.app.state.settings.printer_host}
+    s = request.app.state.settings
+    return {"printer_host": s.printer_host, "ha_device_id": s.ha_device_id}
 
 
 @router.put("/config")
@@ -92,13 +93,17 @@ async def set_config(body: ConfigInput, request: Request):
                 "selected device is missing required anycubic_cloud entities"
             )
         s = request.app.state.settings
-        s.printer_host = validate_printer_host(body.printer_host)
+        host = validate_printer_host(body.printer_host)
+        replacement = type(s)(
+            **{**vars(s), "printer_host": host, "ha_device_id": body.ha_device_id}
+        )
+        replacement.save_config()
+        s.printer_host = host
         s.ha_device_id = body.ha_device_id
-        s.save_config()
         old = svc(request).lan
         if old:
             await old.close()
-        svc(request).lan = ValidatedLegacyLanStart(s.printer_host)
+        svc(request).lan = ValidatedLegacyLanStart(host)
         old_adapter = svc(request)._ha
         if old_adapter:
             await old_adapter.close()
