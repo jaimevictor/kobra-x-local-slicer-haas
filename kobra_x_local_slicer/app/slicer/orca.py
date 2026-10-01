@@ -2,6 +2,8 @@ from __future__ import annotations
 import asyncio,hashlib,json,os,shlex,shutil
 from pathlib import Path
 from app.core.models import Orientation
+LAYER_PROFILES={"0.08":"kobra_x_008_standard.resolved.json","0.12":"kobra_x_012_standard.resolved.json","0.16":"kobra_x_016_standard.resolved.json","0.20":"kobra_x_020_standard.resolved.json","0.24":"kobra_x_024_standard.resolved.json","0.28":"kobra_x_028_standard.resolved.json"}
+MATERIAL_PROFILES={"PLA":"anycubic_pla_kobra_x.resolved.json","PLA+":"anycubic_pla_plus_kobra_x.resolved.json","PETG":"anycubic_petg_kobra_x.resolved.json","ABS":"anycubic_abs_kobra_x.resolved.json","ASA":"anycubic_asa_kobra_x.resolved.json","TPU":"anycubic_tpu_kobra_x.resolved.json"}
 class OrcaError(RuntimeError):pass
 class OrcaRunner:
  def __init__(self,profile_dir:Path,timeout_seconds:int,gcode_limit_bytes:int):
@@ -13,14 +15,14 @@ class OrcaRunner:
   p=self.profile_dir/name
   if not p.is_file(): raise OrcaError(f'resolved profile missing: {name}')
   return p
- def load_filament_profile(self)->dict:return json.loads(self._profile('anycubic_pla_kobra_x.resolved.json').read_text(encoding='utf-8'))
+ def load_filament_profile(self,material:str='PLA')->dict:return json.loads(self._profile(MATERIAL_PROFILES[material]).read_text(encoding='utf-8'))
  def manifest_sha256(self)->str|None:
   p=self.profile_dir/'manifest.json';return hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None
  def profile_versions(self)->dict[str,str]:
   p=self.profile_dir/'manifest.json'
   return json.loads(p.read_text()).get('resolved_sha256',{}) if p.is_file() else {}
- def _process_for_slice(self,directory:Path,supports_enabled:bool)->Path:
-  process=self._profile('kobra_x_020_standard.resolved.json')
+ def _process_for_slice(self,directory:Path,supports_enabled:bool,layer_height:str='0.20')->Path:
+  process=self._profile(LAYER_PROFILES[layer_height])
   if not supports_enabled:return process
   settings=json.loads(process.read_text(encoding='utf-8'));settings['enable_support']='1'
   enabled=directory/'process_with_supports.json';enabled.write_text(json.dumps(settings),encoding='utf-8')
@@ -28,8 +30,8 @@ class OrcaRunner:
  def _clear_previous_gcode(self,directory:Path)->None:
   for previous in directory.glob('*.gcode'):
    if previous.is_file(): previous.unlink()
- async def slice(self,input_path:Path,directory:Path,orientation:Orientation,supports_enabled:bool=False)->Path:
-  out=directory/'output.gcode'; machine=self._profile('kobra_x_04.resolved.json');process=self._process_for_slice(directory,supports_enabled);filament=self._profile('anycubic_pla_kobra_x.resolved.json')
+ async def slice(self,input_path:Path,directory:Path,orientation:Orientation,supports_enabled:bool=False,*,layer_height:str='0.20',material:str='PLA')->Path:
+  out=directory/'output.gcode'; machine=self._profile('kobra_x_04.resolved.json');process=self._process_for_slice(directory,supports_enabled,layer_height);filament=self._profile(MATERIAL_PROFILES[material])
   # A re-slice happens in the same job directory. Orca writes plate_1.gcode,
   # while the previous successful result is normalized to output.gcode; both
   # must not be considered outputs of the new invocation.

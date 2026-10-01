@@ -483,7 +483,7 @@ def inspect_3mf(path: Path, *, max_decompressed: int) -> ThreeMFInspection:
 
             reasons = _multicolor_reasons(model_raw, model_settings_raw, zf)
             if reasons:
-                raise ThreeMFError("3MF multicolor/multi-filament is not supported in V1: " + "; ".join(reasons))
+                raise ThreeMFError("3MF multicolor/multi-material slicing is not yet validated for Kobra X: " + "; ".join(reasons))
 
             return ThreeMFInspection(
                 plate_count=1,

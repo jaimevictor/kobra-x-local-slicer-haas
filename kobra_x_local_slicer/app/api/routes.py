@@ -29,6 +29,10 @@ class SupportInput(BaseModel):
     enabled: bool
 
 
+class LayerInput(BaseModel):
+    layer_height: str
+
+
 class SlotInput(BaseModel):
     human_slot: int
 
@@ -108,6 +112,8 @@ async def set_config(body: ConfigInput, request: Request):
         if old_adapter:
             await old_adapter.close()
         svc(request)._ha = None
+        await svc(request).start()
+        request.app.state.integration_error = None
         return {"ok": True}
     except Exception as exc:
         error(exc)
@@ -210,6 +216,14 @@ async def orientation(job_id: str, body: OrientationInput, request: Request):
 async def supports(job_id: str, body: SupportInput, request: Request):
     try:
         return svc(request).set_supports(job_id, body.enabled)
+    except Exception as exc:
+        error(exc)
+
+
+@router.post("/jobs/{job_id}/layer")
+async def set_layer(job_id: str, body: LayerInput, request: Request):
+    try:
+        return svc(request).set_layer_height(job_id, body.layer_height)
     except Exception as exc:
         error(exc)
 

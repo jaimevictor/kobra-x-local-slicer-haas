@@ -183,6 +183,8 @@ class JobRecord(BaseModel):
     updated_at: datetime
     orientation: Orientation = Orientation.ORIGINAL
     supports_enabled: bool = False
+    layer_height: str = "0.20"
+    nozzle_diameter: str = "0.4"
     selected_slot: AceSlot | None = None
     ace_snapshot: AceSnapshot | None = None
     slice_stats: SliceStats | None = None

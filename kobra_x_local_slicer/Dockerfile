@@ -23,7 +23,17 @@ RUN mkdir -p /profiles/source /profiles/resolved \
       --orca-source-ref "v${ORCA_VERSION}" \
       --machine "machine/Anycubic Kobra X 0.4 nozzle.json:kobra_x_04.resolved.json" \
       --process "process/0.20mm Standard @Anycubic Kobra X 0.4 nozzle.json:kobra_x_020_standard.resolved.json" \
-      --filament "filament/Anycubic PLA @Anycubic Kobra X 0.4 nozzle.json:anycubic_pla_kobra_x.resolved.json"
+      --process "process/0.08mm Standard @Anycubic Kobra X 0.4 nozzle.json:kobra_x_008_standard.resolved.json" \
+      --process "process/0.12mm Standard @Anycubic Kobra X 0.4 nozzle.json:kobra_x_012_standard.resolved.json" \
+      --process "process/0.16mm Standard @Anycubic Kobra X 0.4 nozzle.json:kobra_x_016_standard.resolved.json" \
+      --process "process/0.24mm Standard @Anycubic Kobra X 0.4 nozzle.json:kobra_x_024_standard.resolved.json" \
+      --process "process/0.28mm Standard @Anycubic Kobra X 0.4 nozzle.json:kobra_x_028_standard.resolved.json" \
+      --filament "filament/Anycubic PLA @Anycubic Kobra X 0.4 nozzle.json:anycubic_pla_kobra_x.resolved.json" \
+      --filament "filament/Anycubic PLA+ @Anycubic Kobra X 0.4 nozzle.json:anycubic_pla_plus_kobra_x.resolved.json" \
+      --filament "filament/Anycubic PETG @Anycubic Kobra X 0.4 nozzle.json:anycubic_petg_kobra_x.resolved.json" \
+      --filament "filament/Anycubic ABS @Anycubic Kobra X 0.4 nozzle.json:anycubic_abs_kobra_x.resolved.json" \
+      --filament "filament/Anycubic ASA @Anycubic Kobra X 0.4 nozzle.json:anycubic_asa_kobra_x.resolved.json" \
+      --filament "filament/Anycubic TPU for ACE @Anycubic Kobra X 0.4 nozzle.json:anycubic_tpu_kobra_x.resolved.json"
 
 FROM node:24-bookworm-slim AS frontend_vendor
 WORKDIR /src

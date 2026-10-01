@@ -1,8 +1,11 @@
 # Kobra X Local Slicer
 
-Reference Home Assistant App for **local-only** STL/3MF slicing and LAN printing on an
-**Anycubic Kobra X + ACE**. Version 2 remains deliberately narrow: 0.4 mm nozzle, 0.20 mm layer,
-PLA, one color, one plate, STL or single-plate 3MF.
+Home Assistant App for **local-only** STL/3MF slicing and LAN printing on an
+**Anycubic Kobra X + ACE**. Version 2.1 supports the official 0.4 mm nozzle profile,
+standard layer heights from 0.08 to 0.28 mm, and official PLA, PLA+, PETG, ABS, ASA and
+TPU for ACE profiles. It accepts one material and one plate per job. Multi-material
+3MF projects remain blocked until their tool-to-ACE mapping and firmware start
+payload have been verified on hardware.
 
 ## Safety model
 
@@ -103,6 +106,11 @@ Home Assistant WebSocket registry API using `SUPERVISOR_TOKEN`. Select only the 
 the adapter resolves current `anycubic_cloud` entity IDs by exact `translation_key`, including an
 ACE child via `via_device_id`. Only the printer `device_id` is persisted in `/data/config.json`.
 No Home Assistant long-lived token or Anycubic cloud credential is stored.
+If the integration publishes an IP in public device or entity data, the panel fills it
+automatically. `Nino6689/hass-anycubic` currently stores `lan_host` in private config
+entry options, so its IP still requires manual entry until that fork exposes a public
+entity or device URL. The panel uses the Home Assistant frontend language when available
+(Portuguese or English), and includes an explicit light/dark toggle.
 
 Connection configuration is resolved predictably as: built-in defaults, then
 `/data/options.json`, then the Ingress-managed `/data/config.json`, and finally

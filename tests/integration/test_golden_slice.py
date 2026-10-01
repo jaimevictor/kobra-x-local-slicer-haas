@@ -26,6 +26,15 @@ def test_golden_cube_with_supports_enabled(tmp_path):
  assert output.stat().st_size>0
  assert (tmp_path/'process_with_supports.json').is_file()
 
+
+def test_golden_petg_with_016_layer(tmp_path):
+ runner=OrcaRunner(Path('/opt/kobra/profiles/resolved'),600,512*1024*1024)
+ output=asyncio.run(runner.slice(Path('/tests/fixtures/20mm_cube.stl'),tmp_path,Orientation.ORIGINAL,layer_height='0.16',material='PETG'))
+ analysis=inspect_gcode(output,filament_profile=runner.load_filament_profile('PETG'),gcode_limit_bytes=512*1024*1024,orca_version=runner.version)
+ assert analysis.stats.layer_count and analysis.stats.layer_count>100
+ assert analysis.stats.temperatures.printing_nozzle and analysis.stats.temperatures.printing_nozzle>=220
+ assert analysis.tools <= {0}
+
 def test_golden_sanitized_3mf_with_supports_enabled(tmp_path):
  model=b'''<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="20" y="0" z="0"/><vertex x="20" y="20" z="0"/><vertex x="0" y="20" z="0"/><vertex x="0" y="0" z="20"/><vertex x="20" y="0" z="20"/><vertex x="20" y="20" z="20"/><vertex x="0" y="20" z="20"/></vertices><triangles><triangle v1="0" v2="2" v3="1"/><triangle v1="0" v2="3" v3="2"/><triangle v1="4" v2="5" v3="6"/><triangle v1="4" v2="6" v3="7"/><triangle v1="0" v2="1" v3="5"/><triangle v1="0" v2="5" v3="4"/><triangle v1="1" v2="2" v3="6"/><triangle v1="1" v2="6" v3="5"/><triangle v1="2" v2="3" v3="7"/><triangle v1="2" v2="7" v3="6"/><triangle v1="3" v2="0" v3="4"/><triangle v1="3" v2="4" v3="7"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>'''
  source=tmp_path/'source.3mf'

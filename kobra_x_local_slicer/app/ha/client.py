@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import os
 import asyncio
+import ipaddress
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 import httpx
@@ -232,6 +234,33 @@ def _rgb(value: Any) -> tuple[int, int, int] | None:
         return None
 
 
+def _printer_ip(device: dict[str, Any], rows: list[dict[str, Any]], states: dict[str, dict[str, Any]]) -> str | None:
+    """Use only an IP published for this HA device by its integration."""
+    candidates: list[Any] = []
+    url = device.get("configuration_url")
+    if isinstance(url, str):
+        try:
+            candidates.append(urlparse(url).hostname)
+        except ValueError:
+            pass
+    for connection in device.get("connections") or []:
+        if isinstance(connection, (list, tuple)) and len(connection) == 2 and connection[0] in {"ip", "ipv4", "ipv6"}:
+            candidates.append(connection[1])
+    for row in rows:
+        entity_id = row.get("entity_id")
+        state = states.get(entity_id, {})
+        if _translation_key(row) in {"ip_address", "printer_ip", "lan_host"}:
+            candidates.append(state.get("state"))
+        attrs = _attrs(state)
+        candidates.extend(attrs.get(key) for key in ("ip_address", "printer_ip", "lan_host"))
+    for value in candidates:
+        try:
+            return str(ipaddress.ip_address(value))
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
 class AnycubicHomeAssistantAdapter:
     """Server-side state/control provider backed by ``anycubic_cloud``."""
 
@@ -312,6 +341,11 @@ class AnycubicHomeAssistantAdapter:
 
     async def discover(self) -> list[dict[str, Any]]:
         devices, entities = await self._registries()
+        try:
+            (all_states,) = await self._ws([("get_states", {})])
+            state_map = {state.get("entity_id"): state for state in all_states if isinstance(state, dict)}
+        except (HomeAssistantError, TypeError, ValueError):
+            state_map = {}
         device_map = {d["id"]: d for d in devices if isinstance(d.get("id"), str)}
         by_device: dict[str, list[dict[str, Any]]] = {}
         for row in entities:
@@ -344,6 +378,7 @@ class AnycubicHomeAssistantAdapter:
                     "name": str(
                         device.get("name_by_user") or device.get("name") or device_id
                     ),
+                    "printer_host": _printer_ip(device, rows, state_map),
                     "entities": [
                         {
                             "entity_id": row["entity_id"],

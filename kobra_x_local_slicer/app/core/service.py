@@ -18,12 +18,12 @@ from app.core.security import sanitize_filename
 from app.core.state_machine import assert_transition
 from app.core.storage import JobStore
 from app.ha.client import AnycubicHomeAssistantAdapter, HomeAssistantError
-from app.kobra.ace import pla_slots, select_default_pla
+from app.kobra.ace import select_default_pla
 from app.kobra.lan import ValidatedLegacyLanStart
 from app.kobra.upload import DirectLanFileTransfer, extract_upload_url
 from app.slicer.gcode import inspect_gcode, write_preview
 from app.slicer.geometry import inspect_stl
-from app.slicer.orca import OrcaRunner
+from app.slicer.orca import LAYER_PROFILES, MATERIAL_PROFILES, OrcaRunner
 from app.slicer.three_mf import inspect_3mf, sanitize_3mf_for_slicing, three_mf_to_stl
 
 
@@ -291,20 +291,26 @@ class AppService:
 
     async def select_slot(self, job_id: str, human_slot: int) -> JobRecord:
         record = self.job(job_id)
+        if record.state not in {JobState.READY_TO_SLICE, JobState.SLICED, JobState.AWAITING_CONFIRMATION, JobState.FAILED_RECOVERABLE}:
+            raise ServiceError("slot cannot change in current state")
         snapshot = await self.ace(job_id)
         matches = [s for s in snapshot.normalized if s.human_slot == human_slot]
         if len(matches) != 1:
             raise ServiceError("ACE slot not found")
         slot = matches[0]
-        if slot.material_type != "PLA":
-            raise ServiceError(
-                "Material não suportado pelo slicer automático V1. Selecione um slot PLA."
-            )
+        if slot.material_type not in MATERIAL_PROFILES:
+            raise ServiceError("selected ACE material has no verified Kobra X profile")
         record = self.job(job_id)
+        if record.state == JobState.FAILED_RECOVERABLE:
+            self._transition(record, JobState.READY_TO_SLICE)
+            record.error = None
         record.selected_slot = slot
+        record.slice_stats = None
         record.approved_gcode_sha256 = None
         record.approved_slot_snapshot = None
         record.table_clear_confirmed = False
+        if record.state in {JobState.SLICED, JobState.AWAITING_CONFIRMATION}:
+            self._transition(record, JobState.READY_TO_SLICE)
         return self._save(record)
 
     async def set_orientation(
@@ -358,6 +364,24 @@ class AppService:
             self._transition(record, JobState.READY_TO_SLICE)
         return self._save(record)
 
+    def set_layer_height(self, job_id: str, layer_height: str) -> JobRecord:
+        if layer_height not in LAYER_PROFILES:
+            raise ServiceError("unsupported layer height for the 0.4 mm Kobra X nozzle")
+        record = self.job(job_id)
+        if record.state not in {JobState.READY_TO_SLICE, JobState.SLICED, JobState.AWAITING_CONFIRMATION, JobState.FAILED_RECOVERABLE}:
+            raise ServiceError("layer height cannot change in current state")
+        if record.state == JobState.FAILED_RECOVERABLE:
+            self._transition(record, JobState.READY_TO_SLICE)
+            record.error = None
+        record.layer_height = layer_height
+        record.slice_stats = None
+        record.approved_gcode_sha256 = None
+        record.approved_slot_snapshot = None
+        record.table_clear_confirmed = False
+        if record.state in {JobState.SLICED, JobState.AWAITING_CONFIRMATION}:
+            self._transition(record, JobState.READY_TO_SLICE)
+        return self._save(record)
+
     async def slice(self, job_id: str) -> JobRecord:
         async with self._job_lock(job_id):
             async with self._slicer_semaphore:
@@ -375,13 +399,13 @@ class AppService:
         fresh_ace = await self.ace(job_id)
         record = self.job(job_id)
         record.printer_snapshot_at_slice = await self.printer_snapshot()
-        pla = pla_slots(fresh_ace)
-        if not pla:
-            raise ServiceError("nenhum slot PLA disponível")
+        supported = [slot for slot in fresh_ace.normalized if slot.material_type in MATERIAL_PROFILES]
+        if not supported:
+            raise ServiceError("no ACE slot has a supported Kobra X material profile")
         if record.selected_slot is None:
-            default = select_default_pla(fresh_ace)
+            default = select_default_pla(fresh_ace) or (supported[0] if len(supported) == 1 else None)
             if default is None:
-                raise ServiceError("multiple PLA slots available; select one")
+                raise ServiceError("multiple material slots available; select one")
             record.selected_slot = default
         current = next(
             (
@@ -391,8 +415,8 @@ class AppService:
             ),
             None,
         )
-        if current is None or current.material_type != "PLA":
-            raise ServiceError("selected ACE slot no longer contains PLA")
+        if current is None or current.material_type != record.selected_slot.material_type:
+            raise ServiceError("selected ACE material changed; reselect and slice again")
         record.selected_slot = current
         if record.state != JobState.READY_TO_SLICE:
             self._transition(record, JobState.READY_TO_SLICE)
@@ -403,15 +427,16 @@ class AppService:
         self._transition(record, JobState.SLICING)
         directory = self.store.job_dir(job_id)
         try:
+            slice_options = {}
+            if record.layer_height != "0.20" or current.material_type != "PLA":
+                slice_options = {"layer_height": record.layer_height, "material": current.material_type}
             gcode = await self.orca.slice(
-                self._slicing_input(record),
-                directory,
-                record.orientation,
-                record.supports_enabled,
+                self._slicing_input(record), directory, record.orientation,
+                record.supports_enabled, **slice_options,
             )
             analysis = inspect_gcode(
                 gcode,
-                filament_profile=self.orca.load_filament_profile(),
+                filament_profile=self.orca.load_filament_profile(current.material_type) if current.material_type != "PLA" else self.orca.load_filament_profile(),
                 gcode_limit_bytes=self.settings.gcode_limit_bytes,
                 orca_version=self.orca.version,
                 profile_manifest_sha256=self.orca.manifest_sha256(),
@@ -524,7 +549,7 @@ class AppService:
             )
             if slot is None:
                 raise ServiceError("selected ACE slot no longer exists")
-            if slot.material_type != "PLA":
+            if slot.material_type != record.selected_slot.material_type:
                 record.approved_gcode_sha256 = None
                 record.approved_slot_snapshot = None
                 record.table_clear_confirmed = False
@@ -609,7 +634,7 @@ class AppService:
             "ams_box_mapping": [
                 {
                     "slot_index": slot.protocol_slot_index,
-                    "material_type": "PLA",
+                    "material_type": slot.material_type,
                     "color": rgb,
                 }
             ],
