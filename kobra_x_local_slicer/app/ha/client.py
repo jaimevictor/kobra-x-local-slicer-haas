@@ -30,6 +30,22 @@ class HomeAssistantError(RuntimeError):
     pass
 
 
+async def _receive_ws_json(ws, *, timeout: float | None = None) -> dict[str, Any]:
+    """Turn closed/error frames into recoverable connection failures."""
+    message = await ws.receive(timeout=timeout)
+    if message.type != aiohttp.WSMsgType.TEXT:
+        raise HomeAssistantError(
+            "Home Assistant WebSocket closed or returned a non-text frame"
+        )
+    try:
+        payload = message.json()
+    except ValueError as exc:
+        raise HomeAssistantError("invalid Home Assistant WebSocket JSON") from exc
+    if not isinstance(payload, dict):
+        raise HomeAssistantError("Home Assistant WebSocket message is not an object")
+    return payload
+
+
 DOMAIN = "anycubic_cloud"
 ESSENTIAL_KEYS = (
     "printer_online",
@@ -39,6 +55,9 @@ ESSENTIAL_KEYS = (
     "current_status",
     "job_name",
 )
+# The job-name entity must be mapped for post-start filename correlation, but
+# an idle printer legitimately publishes no job name (unknown/unavailable).
+READINESS_KEYS = tuple(key for key in ESSENTIAL_KEYS if key != "job_name")
 PRINTER_KEYS = (
     "printer_online",
     "is_busy",
@@ -329,17 +348,17 @@ class AnycubicHomeAssistantAdapter:
                 async with session.ws_connect(
                     "ws://supervisor/core/websocket", timeout=8
                 ) as ws:
-                    if (await ws.receive_json()).get("type") != "auth_required":
+                    if (await _receive_ws_json(ws)).get("type") != "auth_required":
                         raise HomeAssistantError(
                             "unexpected Home Assistant WebSocket greeting"
                         )
                     await ws.send_json({"type": "auth", "access_token": self.token})
-                    if (await ws.receive_json()).get("type") != "auth_ok":
+                    if (await _receive_ws_json(ws)).get("type") != "auth_ok":
                         raise HomeAssistantError("Supervisor token was not accepted")
                     results: list[Any] = []
                     for ident, (command, payload) in enumerate(commands, 1):
                         await ws.send_json({"id": ident, "type": command, **payload})
-                        response = await ws.receive_json()
+                        response = await _receive_ws_json(ws)
                         if not response.get("success"):
                             raise HomeAssistantError(
                                 f"Home Assistant {command} failed: {response.get('error', {})}"
@@ -518,12 +537,12 @@ class AnycubicHomeAssistantAdapter:
                     async with session.ws_connect(
                         "ws://supervisor/core/websocket", timeout=8
                     ) as ws:
-                        if (await ws.receive_json()).get("type") != "auth_required":
+                        if (await _receive_ws_json(ws)).get("type") != "auth_required":
                             raise HomeAssistantError(
                                 "unexpected Home Assistant WebSocket greeting"
                             )
                         await ws.send_json({"type": "auth", "access_token": self.token})
-                        if (await ws.receive_json()).get("type") != "auth_ok":
+                        if (await _receive_ws_json(ws)).get("type") != "auth_ok":
                             raise HomeAssistantError(
                                 "Supervisor token was not accepted"
                             )
@@ -542,17 +561,18 @@ class AnycubicHomeAssistantAdapter:
                                     "event_type": event_type,
                                 }
                             )
-                            response = await ws.receive_json()
+                            response = await _receive_ws_json(ws)
                             if not response.get("success"):
                                 raise HomeAssistantError(
                                     f"cannot subscribe to {event_type}"
                                 )
+                        await self._refresh_states()
                         self.ws_connected = True
                         self.last_health_check_at = datetime.now(UTC)
                         backoff = 1.0
                         while not self._stop_event.is_set():
                             try:
-                                message = await ws.receive_json(timeout=15)
+                                message = await _receive_ws_json(ws, timeout=15)
                             except asyncio.TimeoutError:
                                 await ws.ping()
                                 self.last_health_check_at = datetime.now(UTC)
@@ -591,11 +611,13 @@ class AnycubicHomeAssistantAdapter:
                             self.last_health_check_at = datetime.now(UTC)
             except (aiohttp.ClientError, HomeAssistantError, asyncio.TimeoutError):
                 self.ws_connected = False
+                self._state_cache = None
                 if not self._stop_event.is_set():
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 30)
             finally:
                 self.ws_connected = False
+                self._state_cache = None
 
     def capabilities(
         self, states: dict[str, dict[str, Any]] | None = None
@@ -606,7 +628,7 @@ class AnycubicHomeAssistantAdapter:
         result = dict(CAPABILITY_DEFAULTS)
         result.update(
             {
-                "telemetry_from_ha": all(usable(key) for key in ESSENTIAL_KEYS),
+                "telemetry_from_ha": all(usable(key) for key in READINESS_KEYS),
                 "ace_from_ha": any(
                     usable(key)
                     for key in {"ace_spools", "ace_slot_1", "ace_loaded_slot"}
@@ -692,7 +714,7 @@ class AnycubicHomeAssistantAdapter:
             key: _availability(states.get(key))
             for key in set(self.entities) | set(ESSENTIAL_KEYS)
         }
-        essential = all(availability.get(key) == "available" for key in ESSENTIAL_KEYS)
+        essential = all(availability.get(key) == "available" for key in READINESS_KEYS)
         status = _state(states.get("current_status")) or _state(states.get("job_state"))
         return PrinterSnapshot(
             integration_version=self.integration_version,

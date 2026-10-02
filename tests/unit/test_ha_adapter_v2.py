@@ -2,8 +2,12 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import aiohttp
 
-from app.ha.client import AnycubicHomeAssistantAdapter, suggest_entity_map
+from app.ha.client import (
+    AnycubicHomeAssistantAdapter, ESSENTIAL_KEYS, READINESS_KEYS,
+    HomeAssistantError, _receive_ws_json, suggest_entity_map,
+)
 
 
 def _row(state, **attributes):
@@ -20,6 +24,112 @@ def _old_row(state, **attributes):
         "attributes": attributes,
         "last_updated": (datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
     }
+
+
+def _idle_states():
+    return {
+        "printer_online": _row("on"), "is_available": _row("on"),
+        "is_busy": _row("off"), "job_in_progress": _row("off"),
+        "current_status": _row("available"), "job_name": _row("unavailable"),
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("job_name", ["unavailable", "unknown", None])
+async def test_idle_job_name_does_not_block_readiness(monkeypatch, job_name):
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
+    adapter = AnycubicHomeAssistantAdapter("printer")
+    states = _idle_states()
+    states["job_name"] = _row(job_name)
+    async def fake_states():
+        return states
+    monkeypatch.setattr(adapter, "_states", fake_states)
+    snapshot = await adapter.snapshot()
+    assert "job_name" in ESSENTIAL_KEYS
+    assert snapshot.essential_entities_available is True
+    assert snapshot.capabilities["telemetry_from_ha"] is True
+    assert snapshot.job.name is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", READINESS_KEYS)
+async def test_required_telemetry_still_blocks_readiness(monkeypatch, key):
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
+    adapter = AnycubicHomeAssistantAdapter("printer")
+    states = _idle_states()
+    states[key] = _row("unavailable")
+    async def fake_states():
+        return states
+    monkeypatch.setattr(adapter, "_states", fake_states)
+    snapshot = await adapter.snapshot()
+    assert snapshot.essential_entities_available is False
+    assert snapshot.capabilities["telemetry_from_ha"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("frame", [aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR])
+async def test_websocket_close_frames_are_recoverable(frame):
+    class Socket:
+        async def receive(self, *, timeout):
+            return aiohttp.WSMessage(frame, None, None)
+    with pytest.raises(HomeAssistantError, match="non-text frame"):
+        await _receive_ws_json(Socket(), timeout=15)
+
+
+@pytest.mark.asyncio
+async def test_websocket_reconnect_refreshes_missed_state(monkeypatch):
+    import json
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test")
+    adapter = AnycubicHomeAssistantAdapter("printer")
+    connections = refreshes = 0
+    class Socket:
+        def __init__(self, number):
+            self.number = number
+            self.messages = iter([
+                {"type": "auth_required"}, {"type": "auth_ok"},
+                *[{"success": True} for _ in range(3)],
+            ])
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_args):
+            pass
+        async def send_json(self, payload):
+            pass
+        async def receive(self, *, timeout):
+            payload = next(self.messages, None)
+            if payload is not None:
+                return aiohttp.WSMessage(aiohttp.WSMsgType.TEXT, json.dumps(payload), None)
+            assert adapter.ws_connected
+            assert adapter._state_cache["is_busy"]["state"] == ("off" if self.number == 1 else "on")
+            if self.number == 2:
+                adapter._stop_event.set()
+            return aiohttp.WSMessage(aiohttp.WSMsgType.CLOSE, 1000, None)
+    class Session:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_args):
+            pass
+        def ws_connect(self, *_args, **_kwargs):
+            nonlocal connections
+            connections += 1
+            assert not adapter.ws_connected
+            return Socket(connections)
+    async def refresh():
+        nonlocal refreshes
+        refreshes += 1
+        adapter._state_cache = {"is_busy": _row("off" if refreshes == 1 else "on")}
+        return adapter._state_cache
+    async def backoff(seconds):
+        assert seconds == 1.0
+        assert adapter.ws_connected is False
+        assert adapter._state_cache is None
+    monkeypatch.setattr("app.ha.client.aiohttp.ClientSession", Session)
+    monkeypatch.setattr("app.ha.client.asyncio.sleep", backoff)
+    monkeypatch.setattr(adapter, "_refresh_states", refresh)
+    await asyncio.wait_for(adapter._watch_state_changes(), 2)
+    assert connections == refreshes == 2
+    assert adapter.ws_connected is False
+    assert adapter._state_cache is None
 
 
 def test_entity_id_text_is_never_used_as_a_fallback():

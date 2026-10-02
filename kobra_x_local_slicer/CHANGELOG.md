@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.3
+
+- Allow unknown or unavailable idle job names without blocking printer readiness; retain required filename mapping and post-start correlation.
+- Recover Home Assistant WebSocket closures and invalidate disconnected telemetry; refresh state after subscribing on every connection.
+- Add regression coverage for idle readiness, required telemetry and WebSocket reconnection.
+
 ## 2.2.2
 
 - Fix Orca 2.4.2 Linux CLI segmentation faults when rotating models along X, Y or Z.
